@@ -1,40 +1,52 @@
-const express = require('express');
-const bodyParser = require('body-parser');
+const express = require('express')
+const bodyParser = require("body-parser")
+const Docker = require("docker")
 
-const app = express();
-const PORT = 3000;
+const app = express()
+const docker = new Docker()
 
-// Middleware
-app.use(bodyParser.json());
+app.use(bodyParser.json())
 
-// Endpoints
-app.get('/status', (req, res) => {
-    res.json({
-        message: 'Server is running',
-        gpuStatus: 'Idle', //needs to be fetched later on
-    });
-});
+app.post('/start-container', async(req, res)=>{
+    const {imageName, port} = req.body
 
-app.post('/task', (req, res) => {
-    const { task } = req.body;
-    // Process the task (placeholder)
-    const taskId = Date.now(); //   ID
-    res.json({
-        message: 'Task received',
-        taskId,
-    });
-});
+    try{
+        await docker.pull(imageName, {})
+        const container = await docker.createContainer({
+            Image: imageName,
+            ExposedPorts: {"8888/tcp":{}},
+            HostConfig:{
+                PortBindings:{"8888/tcp": [{HostPort: `${port}`}]},
+                Runtime:'nvidia'
+            }
+        })
 
-app.get('/task/:id', (req, res) => {
-    const { id } = req.params;
-    // Placeholder for task progress
-    res.json({
-        taskId: id,
-        status: 'Processing', // replace with real status later
-    });
-});
+        await container.start()
+        // Using domain instead of IP since traffic will come through Cloudflare
+        res.json({
+            message: "Container Started",
+            link: `https://indiegpu.com:${port}`
+        })
 
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    }catch(error){
+        console.error(error)
+        res.status(500).json({error: "Failed to start container"})
+    }
+})
+
+app.post("/stop-container", async(req, res)=>{
+    const {containerId} = req.body
+    try{
+        const container = docker.getContainer(containerId)
+        await container.stop()
+        res.json({message: "Container stopped"})
+    }catch(error){
+        console.error(error)
+        res.status(500).json({error:"Failed to stop container"})
+    }
+})
+
+const PORT = 8000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Backend running on http://localhost:${PORT}`);
 });
