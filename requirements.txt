@@ -22,3 +22,13 @@ uvicorn==0.34.0
 uvloop==0.21.0
 watchfiles==1.0.3
 websockets==14.1
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+pydantic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
