@@ -1,0 +1,16 @@
+api:
+  dashboard: true
+  insecure: true  # For testing
+
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: "traefik-net"
+
+log:
+  level: "DEBUG"

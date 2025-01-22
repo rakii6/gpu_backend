@@ -79,6 +79,7 @@ class FirebaseService:
         #     }
         # }) this piece of code creates a new collection 
 
+
     async def get_user_container(self, user_id:str):
         """Get all containers for a user"""
         docs = self.db.collection('containers').where('user__id','==',user_id).stream()
@@ -93,6 +94,68 @@ class FirebaseService:
             'status':status,
             'last_updated':firestore.SERVER_TIMESTAMP
         })
+    
+    async def get_database(self):
+        try:
+            collection_ref = self.db.collection('users')
+            docs = collection_ref.stream()
+            documents = {doc.id: doc.to_dict() for doc in docs}
+          
+
+
+            return documents
+        except Exception as e:
+            return{
+                "status":"failed",
+                "Message":str(e)
+            }
+
+
+
+
+    async def get_container_by_subdomain(self,subdomain):
+        try:
+            print(f"Looking for subdomain: {subdomain}")
+            users_ref = self.db.collection('users')
+            users = users_ref.get()
+
+            print(f"Number of users found: {len(list(users))}")
+          
+            for user_doc in users:
+                print(f"\nRaw user_doc data for {user_doc.id}:")
+                print(f"Reference path: {user_doc.reference.path}")
+                print(f"Raw data: {user_doc.to_dict()} \n")
+                direct_doc = self.db.document(user_doc.reference.path).get()
+                print(f"Direct document data: {direct_doc.to_dict()}")
+               
+                
+                user_data = direct_doc.to_dict()
+
+                if 'containers' in user_data:
+                    containers = user_data['containers']
+                    for container in containers:
+                        if container.get('subdomain') == subdomain:
+                            return {
+                                "status": "success",
+                                "port": container.get('port'),
+                                "container_id": container.get('container_id'),
+                                "user_id": user_doc.id
+                        }
+                        
+
+            return{
+                "status":"failed",
+                "message":" subdomain not found"
+            }
+           
+        except Exception as e:
+            return{
+                "status"
+            }     
+
+
+
+
 
     async def create_test_user(self):
         """This is just to create a test user"""
