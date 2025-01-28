@@ -1,8 +1,10 @@
 import docker
 from typing import Dict, Any, List
 from schemas.docker import ContainerRequest, ContainerResponse
+from services.gpu_manager import GPUManager
 from .firebase_service import FirebaseService
 from .port import PortManager
+import GPUtil
 
 class DockerService:
     # Configuration at class level
@@ -42,6 +44,7 @@ class DockerService:
     def __init__(self, firebase_service: FirebaseService):
         self.firebase = firebase_service
         self.client = docker.from_env()
+        self.gpu_manager = GPUManager()
         self.container_store = {}
         
         try:
@@ -81,6 +84,10 @@ class DockerService:
                 "status": "Failed to start container",
                 "message": str(e)
             }
+        
+  
+
+
 
     async def create_user_environment(self,request: ContainerRequest):
         
@@ -97,63 +104,64 @@ class DockerService:
 
             # Get container from the config
             config = self.IMAGE_CONFIG[request.container_type].copy()
-            safe_subdomain = request.subdomain.lower()
-
-            #Trafix labels
-            labels={
+            free_gpu_ids = await self.gpu_manager.check_gpu_availability(request.gpu_count) #call here the asiisgn_gpu, returns a list
+            #here we have a bug, we are just getting the list and not checking the failure status
+            if isinstance(free_gpu_ids, list):
+                safe_subdomain = request.subdomain.lower()
+                 #Trafix labels
+                labels={
                 "traefik.enable": "true",
                 f"traefik.http.routers.{safe_subdomain}.entrypoints": "web",
                 f"traefik.http.services.{safe_subdomain}.loadbalancer.server.port": "8888",
                 f"traefik.http.routers.{safe_subdomain}.rule": f"Host(`{safe_subdomain}.indiegpu.com`)",
                 "traefik.docker.network": "traefik-net"
             }
+                print(f"Creating container with labels: {labels}")
+                print(f"Using GPU IDs: {free_gpu_ids}")
+                extracted_gpu = free_gpu_ids[:request.gpu_count]
 
-            print(f"Creating container with labels: {labels}")
-            
 
-            # Create container
-            container = self.client.containers.create(
+                 # Create container
+                container = self.client.containers.create(
                 image=config["image"],
-                environment=config["env"],
+                environment=[*config["env"],
+                             f"NVIDIA_VISIBLE_DEVICES={','.join(map(str, extracted_gpu))}"],
                 command=config["command"],
                 labels=labels,
                 network="traefik-net",
                 device_requests=[
-                    docker.types.DeviceRequest(
-                        count=-1,
-                        capabilities=[['gpu']]
-                    )
-                ]
-            )
-            
-            container.start()
-            container.reload()  # Refresh container info
-            print(f"Container Networks: {container.attrs['NetworkSettings']['Networks']}")
-            print(f"Container Labels: {container.labels}")
-            print(f"Container status: {container.status}")
-            print("Container logs:")
-            print(container.logs().decode('utf-8'))
-            
-           
+                    {
+                        "Driver":"nvidia",
+                        "Capabilities":[["gpu"]],
+                        "DeviceIDs":extracted_gpu
+                    }
+                ])
 
-            # container data for Firebase
-            container_mapping = {
+                container.start()
+                container.reload()  # Refresh container info
+                print(f"Container Networks: {container.attrs['NetworkSettings']['Networks']}")
+                print(f"Container Labels: {container.labels}")
+                print(f"Container status: {container.status}")
+                print("Container logs:")
+                print(container.logs().decode('utf-8'))
+
+                # container data for Firebase
+            
+                container_mapping = {  
                 "user_id": request.user_id,
                 "container_id": container.id,
                 "subdomain": request.subdomain,
-                "type": request.container_type
-            }
+                "gpu_ids":extracted_gpu,
+                "type": request.container_type}
 
-            # Store in Firebase
-            await self.firebase.store_container_info(request.user_id, container_mapping)
+                await self.firebase.store_container_info(request.user_id, container_mapping)# Store in Firebase
 
-            return {
+                return {
                 "status": "success",
                 "container_id": container.id,
                 "access_url": f"{request.subdomain}.indiegpu.com",
-                "jupyter_token": "mysecret123"
-            }
-
+                "jupyter_token": "mysecret123"}
+        
         except Exception as e:
             print(f"Error creating environment: {str(e)}")
            
@@ -162,3 +170,30 @@ class DockerService:
                 "status": "error",
                 "message": str(e)
             }
+            
+
+                
+
+           
+           
+
+          
+            
+            
+           
+            
+            # container = self.client.containers.create(**container_config)
+           
+            
+           
+            
+           
+
+          
+
+            
+            
+
+            
+
+        

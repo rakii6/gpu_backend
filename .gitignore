@@ -8,3 +8,12 @@ env/
 
 # VS Code settings
 .vscode/
+tbh.py
+*.env
+.env
+**/__pycache__/
+*.pyc
+*.env
+serviceAccountKey.json
+random.txt
+tbh.py

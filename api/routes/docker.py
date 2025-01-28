@@ -2,6 +2,8 @@ from fastapi import APIRouter, Response, Request
 from services.docker_service import DockerService
 from services.firebase_service import FirebaseService
 from services.port import PortManager
+from services.gpu_manager import GPUManager
+from services.redis import RedisManager
 from typing import Dict
 from schemas.docker import ContainerRequest, ContainerResponse
 
@@ -9,6 +11,8 @@ router = APIRouter(prefix="/docker")
 firebase_service = FirebaseService()
 docker_service = DockerService(firebase_service)
 port_manage= PortManager()
+gpu_monitor = GPUManager()
+redis_manager = RedisManager()
 
 
 @router.get('/check')
@@ -68,8 +72,33 @@ async def get_database():
             "status":"failed",
             "Message":str(e)
         }
+@router.get('/gpu-stats')
+async def get_gpu_status():
+    try:
+        stats =  gpu_monitor.get_gpu_stats()
+        if isinstance(stats, list):
+            return{
+                "status":"success",
+                "gpu_count":len(stats),
+                "gpus":stats
+            }
+        else:
+            return{
+                "status":"error",
+                "Message":stats.get('message','unknown errror'),
+                "error":stats.get('error')
+            }
 
-
+    except Exception as e:
+        return{
+            "status":"error",
+            "mseeage":"failed to get the gpu Stats",
+            "error":str(e)
+        }
+        
+@router.get('/test-redis')
+async def test_redis_connection():
+    return await redis_manager.test_connection()
 # @router.get('/lookup/{subdomain}')
 # async def lookup_port(subdomain: str, response: Response):
     try:
