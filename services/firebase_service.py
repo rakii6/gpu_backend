@@ -7,11 +7,27 @@ load_dotenv()
 cred_path=os.getenv("FIREBASE_CREDENTIAL_PATH")
 
 class FirebaseService:
+    is_initialized = False
+    
     def __init__(self):
-        
-        cred= credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred)
+
+        if not FirebaseService.is_initialized:
+            try:
+                #we are setting core firebase conncetion once
+                cred= credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred)
+                FirebaseService.is_initialized = True
+            except Exception as e:
+                return{
+                    "status":"firebase init failed",
+                    "message":str(e)
+                }
         self.db = firestore.client()
+
+
+
+        
+        
 
     async def store_container_info(self, user_id:str, container_data:Dict):
         """Store container information for a user"""

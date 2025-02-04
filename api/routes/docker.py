@@ -1,51 +1,49 @@
-from fastapi import APIRouter, Response, Request
+from fastapi import APIRouter, Response, Request, BackgroundTasks
 from services.docker_service import DockerService
 from services.firebase_service import FirebaseService
 from services.port import PortManager
 from services.gpu_manager import GPUManager
 from services.redis import RedisManager
 from typing import Dict
-from schemas.docker import ContainerRequest, ContainerResponse
+from schemas.docker import ContainerRequest
 
 router = APIRouter(prefix="/docker")
-firebase_service = FirebaseService()
-docker_service = DockerService(firebase_service)
-port_manage= PortManager()
-gpu_monitor = GPUManager()
-redis_manager = RedisManager()
+# firebase_service = FirebaseService()
+# docker_service = DockerService(firebase_service)
+# port_manage= PortManager()
+# gpu_monitor = GPUManager()
+# redis_manager = RedisManager()
 
+@router.get('/test')
+async def test_endpoint():
+    print("Test endpoint hit!")
+    return {"message": "Test successful"}
 
 @router.get('/check')
-async def check_docker():
+async def check_docker(request: Request):
+    docker_service = request.app.state.docker
     return await docker_service.check_docker()
+
 @router.post('/run')
-async def run_container():
+async def run_container(request: Request):
+    docker_service = request.app.state.docker
     return await docker_service.run_container()
+
 @router.get('/user/{user_id}/containers')
-async def get_user_containers(user_id: str):
+async def get_user_containers(user_id: str,request:Request):
+    firebase_service = request.app.state.firebase
     return await firebase_service.get_user_container(user_id)
 
-@router.get('/test/port-status')
-async def port_status():
-    try:
-        status= await port_manage.get_port_status()
-        print(f"Port status: {status}")
-        return status
-    except Exception as e:
-        print(f"Error getting port status: {str(e)}")
-        return {"status": "error", "message": str(e)}
-        
-    
-        
-   
 
 @router.post('/environment/create')
-async def creation_of_environment(request: ContainerRequest): #remember the subdomain we are creating it ourselves, 
-    return await docker_service.create_user_environment(request) #need to work on subdomin
+async def creation_of_environment(request:Request,container_request: ContainerRequest,  background_tasks: BackgroundTasks ): #remember the subdomain we are creating it ourselves, 
+    docker_service = request.app.state.docker
+    return await docker_service.create_user_environment(container_request, background_tasks)
 
 @router.get('/lookup/{user_id}/{subdomain}')
-async def lookup_port(subdomain:str, user_id:str):
+async def lookup_port(subdomain:str, user_id:str, request:Request):
     try:
+        firebase_service = request.app.state.firebase
         container_info= await firebase_service.get_container_by_subdomain(subdomain,user_id)
         if container_info:
             return{
@@ -62,9 +60,11 @@ async def lookup_port(subdomain:str, user_id:str):
             "status":"Error",
             "message":str(e)
         }
+    
 @router.get('/database')
-async def get_database():
+async def get_database(request:Request):
     try:
+        firebase_service = request.app.state.firebase
         doc_info = await firebase_service.get_database()
         return doc_info
     except Exception as e:
@@ -73,8 +73,9 @@ async def get_database():
             "Message":str(e)
         }
 @router.get('/gpu-stats')
-async def get_gpu_status():
+async def get_gpu_status(request:Request):
     try:
+        gpu_monitor = request.app.state.gpu
         stats =  gpu_monitor.get_gpu_stats()
         if isinstance(stats, list):
             return{
@@ -97,28 +98,10 @@ async def get_gpu_status():
         }
         
 @router.get('/test-redis')
-async def test_redis_connection():
+async def test_redis_connection(request:Request):
+    redis_manager= request.app.state.redis
     return await redis_manager.test_connection()
-# @router.get('/lookup/{subdomain}')
-# async def lookup_port(subdomain: str, response: Response):
-    try:
-        container_info = await firebase_service.get_container_by_subdomain(subdomain)
-        print(f"lookup response for {subdomain}:", container_info)
-        if container_info["status"] == "success":
-            # Add required headers for nginx
-             port = str(container_info["port"])
-             print(f"Setting port header to: {port}")
-             response.headers["X-Container-Port"] = port
-           
-             return container_info
-            
-        else:
-            response.status_code = 404
-            return container_info
-    except Exception as e:
-        print(f"Error in lookup: {str(e)}")
-        response.status_code = 500
-        return {"status": "error", "message": str(e)}
+
 
 
 @router.get('/lookup/{subdomain}')
@@ -126,6 +109,7 @@ async def lookup_port(subdomain: str, response: Response, request: Request):
     print(f"Received lookup request for subdomain: {subdomain}")
     print(f"Request headers: {dict(request.headers)}")
     try:
+        firebase_service = request.app.state.firebase
         container_info = await firebase_service.get_container_by_subdomain(subdomain)
         print(f"Container info: {container_info}")
         if container_info["status"] == "success":
@@ -165,6 +149,7 @@ async def lookup_port(subdomain: str, response: Response, request: Request):
 #         )
 
 @router.post('/test/create-user')
-async def create_test_user():
+async def create_test_user(request:Request):
     """Create a test user and return their ID"""
+    firebase_service = request.app.state.firebase
     return await firebase_service.create_test_user()
