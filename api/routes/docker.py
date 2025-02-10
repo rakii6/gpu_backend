@@ -6,6 +6,7 @@ from services.gpu_manager import GPUManager
 from services.redis import RedisManager
 from typing import Dict
 from schemas.docker import ContainerRequest
+import GPUtil
 
 router = APIRouter(prefix="/docker")
 # firebase_service = FirebaseService()
@@ -72,30 +73,29 @@ async def get_database(request:Request):
             "status":"failed",
             "Message":str(e)
         }
-@router.get('/gpu-stats')
-async def get_gpu_status(request:Request):
-    try:
-        gpu_monitor = request.app.state.gpu
-        stats =  gpu_monitor.get_gpu_stats()
-        if isinstance(stats, list):
-            return{
-                "status":"success",
-                "gpu_count":len(stats),
-                "gpus":stats
-            }
-        else:
-            return{
-                "status":"error",
-                "Message":stats.get('message','unknown errror'),
-                "error":stats.get('error')
-            }
+@router.get('/gpu/status')
+async def get_gpu_status(request: Request):
+    """Get current GPU allocation status"""
+    gpu_manager = request.app.state.gpu
+    all_gpus = GPUtil.getGPUs()
+    gpu_states = []
 
-    except Exception as e:
-        return{
-            "status":"error",
-            "mseeage":"failed to get the gpu Stats",
-            "error":str(e)
-        }
+    for gpu in all_gpus:
+        state = await gpu_manager._get_gpu_state(gpu.uuid)
+        gpu_states.append({
+            "uuid": gpu.uuid,
+            "status": state.get('status', 'available'),
+            "container_id": state.get('container_id'),
+            "user_id": state.get('user_id'),
+            "allocated_at": state.get('allocated_at'),
+            "memory_total": gpu.memoryTotal,
+            "memory_free": gpu.memoryFree
+        })
+
+    return {
+        "total_gpus": len(all_gpus),
+        "gpu_states": gpu_states
+    }
         
 @router.get('/test-redis')
 async def test_redis_connection(request:Request):

@@ -83,14 +83,7 @@ class RedisManager:
                 print(f"Error in redis_overlord: {str(e)}")
               
 
-    # def test_gpu_detection(self):
-        
-    #     GPUS = GPUtil.getGPUs()
-    #     for gpu in GPUS:
-    #         print(f"GPU ID: {gpu.id}")
-    #         print(f"GPU UUID: {gpu.uuid}")
-    #         print(f"GPU Name: {gpu.name}")
-    #         print("-------------------")
+    
     def run_periodic_update(self):#function to run redis overlord very 10mins
         while True:
             self.redis_overlord()

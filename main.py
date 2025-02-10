@@ -8,7 +8,7 @@ from services.gpu_manager import GPUManager
 from services.redis import RedisManager
 from services.firebase_service import FirebaseService
 from services.docker_service import DockerService
-
+from services.log_manager import Log_manager
 @asynccontextmanager
 async def lifespan(app:FastAPI):
     redis_manager = RedisManager() #only one universal redis client connection is created

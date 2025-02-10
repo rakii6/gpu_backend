@@ -121,38 +121,31 @@ class DockerService:
             try:
                 print(f"checking for image:{config['image']}")
                 self.client.images.get(config["image"])
-                image_ready=True
-                print("image not found locally")
             except docker.errors.ImageNotFound:
-                image_ready=False
-                print("image not found local, pulling")
-                background_tasks.add_task(self.client.images.pull(config["image"]))
                 return{
                     "status":"pending",
                     "message": "Image pull in progress. Please try again in a few minutes.",
                     "image": config['image']
                 }                
 
-            if image_ready:
+            
 
             # self.redis_manager.update_gpu_status()
-                print("4. Checking GPU availability")
+            print("4. Checking GPU availability")
 
 
-                free_gpu_ids = await self.gpu_manager.check_gpu_availability(request.gpu_count) #call here the asiisgn_gpu, returns a list
-                print(f"5. GPU check result: {free_gpu_ids}")
+            free_gpu_ids = await self.gpu_manager.check_gpu_availability(request.gpu_count) #call here the asiisgn_gpu, returns a list
+            print(f"5. GPU check result: {free_gpu_ids}")
 
             #here we have a bug, we are just getting the list and not checking the failure status
 
 
 
-            if isinstance(free_gpu_ids, dict) and 'status' in free_gpu_ids:
+            if isinstance(free_gpu_ids, dict):
                 print("6. GPU check failed")
                 return free_gpu_ids
             
-            print("7. Proceeding with container creation")    
             safe_subdomain = request.subdomain.lower()
-            print(f"8. Using subdomain: {safe_subdomain}")
                  #Trafix labels
             labels={
                 "traefik.enable": "true",
@@ -161,18 +154,16 @@ class DockerService:
                 f"traefik.http.routers.{safe_subdomain}.rule": f"Host(`{safe_subdomain}.indiegpu.com`)",
                 "traefik.docker.network": "traefik-net"
             }
-            print("9. Created labels")
                 
-            extracted_gpu = free_gpu_ids[:request.gpu_count]
-            print(f"10. Selected GPUs: {extracted_gpu}")
 
 
             try:
-                print("11. Creating container...")    # Create container
-                container = self.client.containers.create(
+                print("11. Creating container...")
+                print(f"Image config being used: {config}")     
+                container = self.client.containers.create(  # Create container
                 image=config["image"],
                 environment=[*config["env"],
-                             f"NVIDIA_VISIBLE_DEVICES={','.join(map(str, extracted_gpu))}"],
+                             f"NVIDIA_VISIBLE_DEVICES={','.join(map(str, free_gpu_ids))}"],
                 command=config["command"],
                 labels=labels,
                 network="traefik-net",
@@ -180,40 +171,44 @@ class DockerService:
                     {
                         "Driver":"nvidia",
                         "Capabilities":[["gpu"]],
-                        "DeviceIDs":extracted_gpu
+                        "DeviceIDs":free_gpu_ids
                     }
                 ])
-                print(f"12. Container created with ID: {container.id}")
+                print(f"12. Container created with ID: {container.id if container else 'None'}")
 
-                for gpu_uuid in extracted_gpu:
-                    print(f"13. Marking GPU {gpu_uuid} as extracted")
-                    await self.redis_manager.mark_extracted_gpu(gpu_uuid,container.id,request.user_id)
+                allocation_errors= []
+                for gpu_uuid in free_gpu_ids:
+                    allocation_results = await self.gpu_manager.allocate_gpu(
+                        gpu_uuid,
+                        container.id,
+                        request.user_id
+
+                    )
+                    if allocation_results.get('status')== 'error':
+                        allocation_errors.append(allocation_results['message'])
+
+                if allocation_errors:
+                    await self._cleanup_failed_allocation(container.id, free_gpu_ids)
+                    return {
+                            "status": "error",
+                            "message": f"GPU allocation failed: {', '.join(allocation_errors)}"
+                        }    
                                     
 
 
-                #call the redismanager to update_gpu(extracted_gpu, container.id, ContainerRequest.user_id)
-                print("14. Starting container")
                 container.start()
                 container.reload()  # Refresh container info
-                # print(f"Container Networks: {container.attrs['NetworkSettings']['Networks']}")
-                # print(f"Container Labels: {container.labels}")
-                # print(f"Container status: {container.status}")
-                # print("Container logs:")
-                # print(container.logs().decode('utf-8'))
-                print("15. Creating container mapping")
+                
 
-                # monitor_container = threading.Thread(target=clean_up_resource, arg=(container.id))
 
-                # container data for Firebase
             
                 container_mapping = {  
                 "user_id": request.user_id,
                 "container_id": container.id,
                 "subdomain": request.subdomain,
-                "gpu_ids":extracted_gpu,
+                "gpu_ids":free_gpu_ids,
                 "type": request.container_type}
 
-                print("16. Storing in Firebase")
                 await self.firebase.store_container_info(request.user_id, container_mapping)# Store in Firebase
 
 
@@ -226,13 +221,9 @@ class DockerService:
                 "jupyter_token": "mysecret123"}
         
             except Exception as container_error:
-                print(f"Container creation error: {container_error}")
-           
-            
-                return {
-                "status": "error",
-                "message": f"Container creation failed: {str(container_error)}"
-            }
+                await self._cleanup_failed_allocation(container.id, free_gpu_ids)
+                raise container_error
+               
         except Exception as e:
             print(f"Environment creation error: {str(e)}")
             return {
@@ -241,23 +232,24 @@ class DockerService:
         }
             
 
-    # async def clean_up_resource(self, id:str):
-    #     try:
-                
-    #         container = self.client.containers.get(id)
+    
 
-    #         while True:
-    #             container.reload()
-    #             status =container.status
-    #             health = container.attrs["State"].get("Health",{}).get("Status","no health check")
-    #             dead = container.attrs["State"].get("Dead", False)
+    async def _cleanup_failed_allocation(self, container_id: str, gpu_ids: List[str]):
+        """Cleanup resources if container creation fails"""
+        try:
+            # Remove container if it exists
+            try:
+                container = self.client.containers.get(container_id)
+                container.remove(force=True)
+            except:
+                pass
 
-    #             print(f"Container {id} - Status: {status}, Health:{health}")
+            # Release GPU allocations
+            for gpu_id in gpu_ids:
+                await self.gpu_manager.release_gpu(gpu_id)
 
-    #             if status != 'running' or health =="unhealthy":
-                    
-           
-           
+        except Exception as e:
+            print(f"Cleanup error: {str(e)}")
 
           
             
