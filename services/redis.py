@@ -44,6 +44,8 @@ class RedisManager:
                 print("starting detections ...........")
 
                 GPUS=GPUtil.getGPUs()
+                for key in self.redis.scan_iter("gpu:*"):
+                    self.redis.delete(key)
                 print(f"Number of GPUs detected: {len(GPUS)}")
                 stored_count = 0
 
@@ -63,14 +65,19 @@ class RedisManager:
                             "memoryFree": str(gpu.memoryFree),
                             "memoryTotal": str(gpu.memoryTotal),
                             "memoryUsed": str(gpu.memoryUsed),
-                            "status": "available" if gpu.memoryFree > 1000 else "in_use"  # Simple rule
+                            "status": "available" if gpu.memoryFree > 1000 else "in_use",
+                            "container_id": "",     # Empty string for no container
+                            "user_id": "",          # Empty string for no user
+                            "allocated_at": ""  # Simple rule
                         }
-                        for field, value in gpu_status.items():
-                            self.redis.hset(f"gpu:{gpu_id}", field, value)
-                    
+                        # for field, value in gpu_status.items():
+                        #     self.redis.hset(f"gpu:{gpu_id}", field, value)
+                        self.redis.hmset(f"gpu:{gpu_id}",gpu_status)
                         self.redis.expire(f"gpu:{gpu_id}",86400)
                         stored_count += 1
                         print(f"Successfully stored GPU {gpu.id} with key {gpu_id}")
+
+                        
                     except Exception as e:
                         print(f"Error storing GPU {gpu.id}: {str(e)}")
 

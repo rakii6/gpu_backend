@@ -41,6 +41,11 @@ async def creation_of_environment(request:Request,container_request: ContainerRe
     docker_service = request.app.state.docker
     return await docker_service.create_user_environment(container_request, background_tasks)
 
+@router.post('/stop/container/{container_id}/{user_id}')
+async def cleanup_container(request:Request, container_id:str, user_id:str):
+    docker_service = request.app.state.docker
+    return await docker_service.cleanup_container(container_id, user_id)
+
 @router.get('/lookup/{user_id}/{subdomain}')
 async def lookup_port(subdomain:str, user_id:str, request:Request):
     try:

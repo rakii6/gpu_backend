@@ -32,8 +32,17 @@ class GPUManager:
     
 
     async def _set_gpu_state(self, gpu_uuid: str, state:dict):
+        all_gpus = GPUtil.getGPUs()
+        if gpu_uuid not in [gpu.uuid for gpu in all_gpus]:
+            print(f"Warning: Attempting to set state for unknown GPU: {gpu_uuid}")
+            return
         key = f"gpu:{gpu_uuid}"
-        self.redis.hmset(key, state)
+        self.redis.delete(key)
+
+        if state:
+            self.redis.hmset(key, state)
+        print(f"just set the new state for {key}")
+
 
 
 
@@ -41,23 +50,23 @@ class GPUManager:
 
         with self.gpu_lock:
             all_gpus = GPUtil.getGPUs()
-            print(f"Found GPUs: {len(all_gpus)}")
+            # print(f"Found GPUs: {len(all_gpus)}")
             available_gpus = []
             used_gpus = []
 
 
             for gpu in all_gpus:
-                print(f"Checking GPU: {gpu.uuid}")
+                # print(f"Checking GPU: {gpu.uuid}")
                 state = await self._get_gpu_state(gpu.uuid)
-                print(f"GPU state: {state}")
+                # print(f"GPU state: {state}")
 
                 if state.get('status')=='in_use':
                     used_gpus.append(gpu.uuid)
                 else:
                     available_gpus.append(gpu.uuid)
 
-            print(f"Available GPUs: {len(available_gpus)}")
-            print(f"Used GPUs: {len(used_gpus)}")
+            # print(f"Available GPUs: {len(available_gpus)}")
+            # print(f"Used GPUs: {len(used_gpus)}")
 
             if len(available_gpus) < requested_gpu:
                 return{
@@ -68,7 +77,7 @@ class GPUManager:
         
     async def allocate_gpu(self, gpu_uuid:str, container_id:str, user_id:str):
         with self.gpu_lock:
-
+            print(f"attempting tto allocate gpu{gpu_uuid}")
             current_state =  await self._get_gpu_state(gpu_uuid)
             if current_state.get('status')=='in_use':
                 return{
@@ -82,7 +91,9 @@ class GPUManager:
                 'user_id': user_id,
                 'allocated_at': datetime.now().isoformat()
             }
-            await self._set_gpu_state(gpu_uuid, new_state)
+            print(f"Now Setting new state for GPU {gpu_uuid}: {new_state}")
+            updated_state=await self._set_gpu_state(gpu_uuid, new_state)
+            print(f"Verified state after update: {updated_state}")
             return{
                 "status":"success",
                 "message":f"GPU {gpu_uuid} allocate successfullly"
@@ -94,8 +105,17 @@ class GPUManager:
 
     async def release_gpu(self, gpu_uuid:str):
         with self.gpu_lock:
-            await self._set_gpu_state(gpu_uuid, {'status':"available"})
-    
+             new_state = {
+            'status': 'available',
+            'container_id': '',
+            'user_id': '',
+            'allocated_at': ''
+        }
+        updated_state = await self._set_gpu_state(gpu_uuid, new_state)
+        return {
+            "status": "success" if updated_state.get('status') == 'available' else "error",
+            "message": f"GPU {gpu_uuid} released successfully" if updated_state else f"Failed to release GPU {gpu_uuid}"
+        }
 
     async def get_container_gpus(self, container_id:str)-> List:
         """GET alll the  gpus to a container"""
