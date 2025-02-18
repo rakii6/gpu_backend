@@ -39,12 +39,18 @@ async def get_user_containers(user_id: str,request:Request):
 @router.post('/environment/create')
 async def creation_of_environment(request:Request,container_request: ContainerRequest,  background_tasks: BackgroundTasks ): #remember the subdomain we are creating it ourselves, 
     docker_service = request.app.state.docker
+    # session_manager = request.app.state.session
     return await docker_service.create_user_environment(container_request, background_tasks)
 
 @router.post('/stop/container/{container_id}/{user_id}')
 async def cleanup_container(request:Request, container_id:str, user_id:str):
     docker_service = request.app.state.docker
     return await docker_service.cleanup_container(container_id, user_id)
+
+@router.post('/pause_container/{container_id}/{user_id}')
+async def pause_container(request:Request, container_id:str, user_id:str):
+    docker_service = request.app.state.docker
+    return await docker_service.pause_container(container_id, user_id)
 
 @router.get('/lookup/{user_id}/{subdomain}')
 async def lookup_port(subdomain:str, user_id:str, request:Request):

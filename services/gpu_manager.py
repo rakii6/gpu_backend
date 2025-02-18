@@ -50,23 +50,19 @@ class GPUManager:
 
         with self.gpu_lock:
             all_gpus = GPUtil.getGPUs()
-            # print(f"Found GPUs: {len(all_gpus)}")
+            
             available_gpus = []
             used_gpus = []
 
 
             for gpu in all_gpus:
-                # print(f"Checking GPU: {gpu.uuid}")
                 state = await self._get_gpu_state(gpu.uuid)
-                # print(f"GPU state: {state}")
 
                 if state.get('status')=='in_use':
                     used_gpus.append(gpu.uuid)
                 else:
                     available_gpus.append(gpu.uuid)
 
-            # print(f"Available GPUs: {len(available_gpus)}")
-            # print(f"Used GPUs: {len(used_gpus)}")
 
             if len(available_gpus) < requested_gpu:
                 return{

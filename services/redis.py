@@ -6,6 +6,7 @@ import time
 import json
 import GPUtil
 import threading
+import traceback
 load_dotenv()
 redis_love=os.getenv("REDIS_LOVER")
 
@@ -18,6 +19,7 @@ class RedisManager:
 
     def __init__(self):
         if not RedisManager.is_connected:
+            print("RedisManager initialization called from:", traceback.format_stack()[-2])
             try:
                 print("Connecting to Redis for the first time...")
                 RedisManager.redis_client= redis.Redis(
@@ -43,22 +45,37 @@ class RedisManager:
             try:
                 print("starting detections ...........")
 
-                GPUS=GPUtil.getGPUs()
+                time.sleep(1)
+
+                # import subprocess
+                # try:
+                #     subprocess.run(['nvidia-smi'], check=True)
+                # except subprocess.CalledProcessError as e:
+                #     print(f"nvidia-smi failed: {e}")
+                #     return
+
+                try:
+
+                    GPUS=GPUtil.getGPUs()
+                    if not GPUS:
+                        print("no Gpus detected, retrying.......")
+                        time.sleep(2)
+                        GPUS=GPUtil.getGPUs()
+                except Exception as e:
+                    print(f"Error getting GPUS: {str(e)}")
+                    return
+                
                 for key in self.redis.scan_iter("gpu:*"):
                     self.redis.delete(key)
-                print(f"Number of GPUs detected: {len(GPUS)}")
                 stored_count = 0
 
-                if not GPUS:
-                    print("warning: no GPus detected")
-                    return
+              
 
                 for gpu in GPUS:
                     try:
 
-                        gpu_id = gpu.uuid
-                        print(type(gpu_id))
-                        # print(f"Processing GPU: {gpu_id}")
+                        if not hasattr(gpu, 'uuid'):
+                            continue
 
                         gpu_status ={
 
@@ -72,14 +89,14 @@ class RedisManager:
                         }
                         # for field, value in gpu_status.items():
                         #     self.redis.hset(f"gpu:{gpu_id}", field, value)
-                        self.redis.hmset(f"gpu:{gpu_id}",gpu_status)
-                        self.redis.expire(f"gpu:{gpu_id}",86400)
+                        self.redis.hmset(f"gpu:{gpu.uuid}",gpu_status)
+                        self.redis.expire(f"gpu:{gpu.uuid}",86400)
                         stored_count += 1
-                        print(f"Successfully stored GPU {gpu.id} with key {gpu_id}")
 
                         
                     except Exception as e:
-                        print(f"Error storing GPU {gpu.id}: {str(e)}")
+                        print(f"Error processing GPU {getattr(gpu, 'id', 'unknown')}: {e}")
+                        continue
 
 
 
@@ -95,11 +112,12 @@ class RedisManager:
         while True:
             self.redis_overlord()
             # self.test_gpu_detection()
-            time.sleep(600)
+            time.sleep(1800)
     def start_gpu_status_update(self):# Background thread to start the periodic update
         status_update_thread = threading.Thread(target=self.run_periodic_update)
         status_update_thread.daemon = True #background
         status_update_thread.start()
+        return status_update_thread
                 
 
 

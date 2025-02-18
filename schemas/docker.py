@@ -16,3 +16,4 @@ class ContainerRequest(BaseModel):
     container_type:str
     subdomain:str     #this subdomina we are creating ourselves, need to be created by us
     gpu_count: int=1
+    # duration: int

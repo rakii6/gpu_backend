@@ -152,9 +152,9 @@ class DockerService:
                     }
                 ])
 
-                allocation_errors= []
-                for gpu_uuid in free_gpu_ids:
-                    allocation_results = await self.gpu_manager.allocate_gpu(
+                allocation_errors= [] 
+                for gpu_uuid in free_gpu_ids:#this section is to tell the gpu manager, that contaier with gpuuid and user_id to be updated in redis
+                    allocation_results = await self.gpu_manager.allocate_gpu( 
                         gpu_uuid,
                         container.id,
                         request.user_id
@@ -200,22 +200,6 @@ class DockerService:
         }
 
     async def _cleanup_failed_allocation(self, container_id: str, gpu_ids: List[str]):
-
-            
-
-
-
-
-
-
-                
-
-                
-
-            
-
-    
-
         """Cleanup resources if container creation fails"""
         try:
             # Remove container if it exists
@@ -255,6 +239,7 @@ class DockerService:
            
             for gpu_key in self.redis.scan_iter("gpu:*"):
                 gpu_data = self.redis.hgetall(gpu_key)
+                
                 if gpu_data:
                     container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
                     if container_id_value == container_id:
@@ -286,8 +271,131 @@ class DockerService:
                 "message":str(e)
             }
 
-    # async def pause_container(self,container_id:str, user_id:str):
-        
+    async def pause_container(self,container_id:str, user_id:str):
+
+        try:
+
+            try:
+                container_to_pause = self.docker_client.containers.get(container_id)
+                if not container_to_pause:
+                    return{
+                    "status":"error",
+                    "Message":"container with that ID not found"
+                }
+                container_to_pause.reload()
+                if container_to_pause.status == "paused":
+                    return{
+                        "status":"error",
+                        "message":"its already paused bruh"
+                    }
+                container_to_pause.pause()
+
+            except docker.errors.NotFound:
+                return {
+                "status": "error",
+                "message": f"Container {container_id} not found"
+            }
+            except docker.errors.APIError as e:
+                return {
+                "status": "error",
+                "message": f"Error pausing container: {str(e)}"
+                }
+                
+            
+            try: 
+                for gpu_key in self.redis.scan_iter("gpu:*"):
+                    gpu_data = self.redis.hgetall(gpu_key)
+                    if gpu_data:
+                        container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
+                        if container_id_value == container_id:
+                            new_state={
+                            "status":"paused",
+                            "container_id": container_id,
+                            "user_id": user_id,
+                            "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
+                        
+                        }
+                        self.redis.hmset(gpu_key, new_state)
+
+                await self.firebase.update_container_status(user_id, container_id, "paused")
+                return {
+                "status": "success",
+                "message": f"Container {container_id} paused successfully"
+                }
+            
+            except Exception as e:
+                return{
+                    "status":"error",
+                    "message":str(e)
+                }
+        except Exception as e:
+            return{
+                "status":"erroor",
+                "message":str(e)
+            }
+
+    async def restart_container(self, container_id:str, user_id:str):
+        try:
+
+            try:
+                container_to_revive = self.docker_client.containers.get(container_id)
+
+                if not container_to_revive:
+                    return{
+                        "status":"error",
+                        "message":"container with that ID not found"
+                    }
+                if container_to_revive.status == "running":
+                    return{
+                        "status":"error",
+                        "message":"its already running bruh"
+                    }
+                
+                container_to_revive.reload()
+                container_to_revive.stop()
+                container_to_revive.start()
+            except docker.errors.NotFound:
+                return {
+                "status": "error",
+                "message": f"Container {container_id} not found"
+                }
+            except docker.errors.APIError as e:
+                return {
+                "status": "error",
+                "message": f"Error restarting container: {str(e)}"
+                }
+            
+            try:
+                for gpu_key in self.redis.scan_iter("gpu:*"):
+                    gpu_data = self.redis.hgetall(gpu_key)
+                    if gpu_data:
+                        container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
+                        if container_id_value == container_id:
+                            new_state={
+                                "status":"in_use",
+                                "container_id": container_id,
+                                "user_id": user_id,
+                                "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
+                                }
+                            self.redis.hmset(gpu_key, new_state)
+                await self.firebase.update_container_status(user_id, container_id, "running") 
+
+                return{
+                    "status": "success",
+                    "message": f"Container {container_id} restarted successfully"
+                }
+            except Exception as e:
+                return{
+                    "status":"error",
+                    "message":str(e)
+                }
+        except Exception as e:
+            return{
+                "status":"error",
+                "message":str(e)
+            }
+
+                    
                         
 
 

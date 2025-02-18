@@ -1,4 +1,6 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -8,17 +10,20 @@ from services.gpu_manager import GPUManager
 from services.redis import RedisManager
 from services.firebase_service import FirebaseService
 from services.docker_service import DockerService
-from services.log_manager import Log_manager
+from security.rate_limiter import RateLimiter
+from services.session_manager import SessionManager
+
+redis_manager = RedisManager() #only one universal redis client connection is created
+
 @asynccontextmanager
 async def lifespan(app:FastAPI):
-    redis_manager = RedisManager() #only one universal redis client connection is created
 
     gpu_manager= GPUManager(redis_manager) #gpumanager consumes this redis client for his own purpose
 
 
     firebase_service = FirebaseService() #only onefirebase client is created.
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager) #docker manager consumes gpu manger for his own purpose
-
+    session_manager = SessionManager(redis_manager, firebase_service, docker_service, gpu_manager)
 
 
 #this section tell entire app that any request can get it from here ...
@@ -26,7 +31,7 @@ async def lifespan(app:FastAPI):
     app.state.firebase = firebase_service
     app.state.docker = docker_service
     app.state.gpu = gpu_manager
-
+    app.state.session = session_manager
 
 
 
@@ -38,11 +43,36 @@ async def lifespan(app:FastAPI):
     load_gpu_updates.clear() #this just clears everything when i shut  app
 
 
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: FastAPI, rate_limiter :RateLimiter ):
+        super().__init__(app)
+        self.rate_limiter = rate_limiter
+
+    async def dispatch(self, request, call_next):
+        blocked_paths = ['/docs', '/redoc', '/openapi.json', '/docs/oauth2-redirect']
+        if any(request.url.path.startswith(path) for path in blocked_paths):
+            return JSONResponse(
+
+                status_code = 404,
+                content={
+                    "message":"Nothing to see here. Please disperse.",
+                    "suggestions":"Maybe try being productive with your life ~UwU"
+                }
+
+            )
+        
+        await self.rate_limiter.check_rate_limit(request)
+        response = await call_next(request)
+        return response
+
+
+
+
 
 app = FastAPI(lifespan=lifespan)
-
+rate_limiter = RateLimiter(redis_manager)
+app.add_middleware(RateLimitMiddleware, rate_limiter=rate_limiter)
 app.add_middleware(CORSMiddleware, **CORS_CONFIG)
-
 app.include_router(general.router)
 app.include_router(docker.router)
 
