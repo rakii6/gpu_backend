@@ -14,24 +14,44 @@ from security.rate_limiter import RateLimiter
 from services.session_manager import SessionManager
 
 redis_manager = RedisManager() #only one universal redis client connection is created
+firebase_service = FirebaseService() #only onefirebase client is created.
+docker_service = None
+gpu_manager = None
+session_manager = None
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
+    global docker_service, gpu_manager, session_manager
+
+    #Core initialization of Services
 
     gpu_manager= GPUManager(redis_manager) #gpumanager consumes this redis client for his own purpose
+    print("GPU Manager initialized")
+
+    session_manager = SessionManager(redis_manager, firebase_service, gpu_manager, None)
+    print("Session Manager initialized")
 
 
-    firebase_service = FirebaseService() #only onefirebase client is created.
-    docker_service= DockerService(gpu_manager,firebase_service, redis_manager) #docker manager consumes gpu manger for his own purpose
-    session_manager = SessionManager(redis_manager, firebase_service, docker_service, gpu_manager)
+    docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
+    print("Docker Service initialized")
 
+    print("Before linking:")
+    print(f"DockerService session: {docker_service._session}")
+    print(f"SessionManager docker: {session_manager._docker}")
+
+    #here again we pass dockeer service, after it has been inistialized
+    docker_service.session = session_manager
+    session_manager.docker = docker_service
+    print("After linking:")
+    print(f"DockerService session: {docker_service._session}")
+    print(f"SessionManager docker: {session_manager._docker}")
 
 #this section tell entire app that any request can get it from here ...
     app.state.redis = redis_manager
     app.state.firebase = firebase_service
     app.state.docker = docker_service
     app.state.gpu = gpu_manager
-    app.state.session = session_manager
+    app.state.session_service = session_manager
 
 
 

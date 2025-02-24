@@ -1,21 +1,31 @@
 from .firebase_service import FirebaseService
 from .redis import RedisManager
-from .docker_service import DockerService
+from .service_types import DockerService
 from .gpu_manager import GPUManager
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-import asyncio
-
+import docker.errors
 class SessionManager:
 
-    def __init__(self, redis_manager:RedisManager, firebase_service:FirebaseService, docker_service:DockerService, gpu_manager: GPUManager ):
+    def __init__(self, redis_manager:RedisManager, firebase_service:FirebaseService, gpu_manager: GPUManager, docker_service: Optional[DockerService] = None ):
         
         self.redis = redis_manager.redis
         self.firebase = firebase_service
-        self.docker = docker_service
         self.gpu_manager = gpu_manager
+        self._docker = docker_service
+        print(f"Session Manager initialized with docker: {docker_service is not None}")
+        
+    @property
+    def docker(self):
+         if self._docker is None:
+               print("Warning: Docker service not set in SessionManager")
+         return self._docker
+    
 
-
+    @docker.setter
+    def docker(self, value):
+         print(f"Setting docker service in SessionManager: {value is not None}")
+         self._docker = value
 
 
 
@@ -37,6 +47,7 @@ class SessionManager:
                 end_time = current_time + timedelta(hours=duration_hours) #time delta is a python class to add or sub time from the present time.
 
                 
+                
                 session_data = {
                     "container_id":container_id,
                     "payment_status": "paid" if payment_status else "unpaid", #this is important
@@ -48,7 +59,7 @@ class SessionManager:
 
 
                 }
-                self.redis.hmset(session_key, session_data)
+                self.redis.hset(session_key, mapping=session_data)
                 self.redis.expire(session_key, duration_hours * 3600)
 
 
@@ -206,48 +217,23 @@ class SessionManager:
     4. Update status in Firebase
     5. Clean up Redis entries"""
         try:
-            try:
-                container = self.docker.containers.get(container_id)
-                container_info = container.attrs
-            except self.docker.errors.NotFound:
-                 return{
-                      "status":"error",
-                      "message":f"error & warningContainer {container_id} not found, might already be removed"
-                        
-                 }
-            device_requests = container_info["HostConfig"].get("DeviceRequests", [])
-            gpu_ids =[]
-            for devices in device_requests:
-                 if devices.get("Driver") =="nvidia":
-                      gpu_ids = devices.get('DeviceIDs',[])
-                      for gpu_id in gpu_ids:
-                           try:
-                                await self.gpu_manager.release_gpu(gpu_id)
-                            
-                           except Exception as gpu_error:
-                                return{
-                                     "message": f"Error releasing GPU {gpu_id}: {str(gpu_error)}"
-                                }
-            try:
-                container.stop(timeout=10)
-                container.remove(force=True)
-                 
-            except Exception as container_error:
-                return{
-                    
-                    "Message":f"Error stopping container: {str(container_error)}"
-                }
-            
-
             session_key = f"session:{container_id}"
+            print("session key is collected")
             if self.redis.exists(session_key):
+                 print(f"session is key being deleted")
                  self.redis.delete(session_key)
-            
-            return{
+                 print("session key  deleted")
+                 return{
                  "status": "success",
                 "message": "Session cleanup completed",
-                "released_gpus": gpu_ids
-            }
+                "cleaned_session":session_key
+                }
+            else:
+                return{
+                     "status": "warning",
+                    "message": "No session data found"
+                }
+        
         except Exception as e:
             
             return {

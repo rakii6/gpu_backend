@@ -41,6 +41,12 @@ async def creation_of_environment(request:Request,container_request: ContainerRe
     docker_service = request.app.state.docker
     # session_manager = request.app.state.session
     return await docker_service.create_user_environment(container_request, background_tasks)
+@router.post('sessions/{container_id}/status')
+async def get_container_session_status(container_id:str, request:Request):
+    session_manager = request.app.state.session_service
+    return await session_manager.get_session_status(container_id)
+
+    
 
 @router.post('/stop/container/{container_id}/{user_id}')
 async def cleanup_container(request:Request, container_id:str, user_id:str):
@@ -51,6 +57,10 @@ async def cleanup_container(request:Request, container_id:str, user_id:str):
 async def pause_container(request:Request, container_id:str, user_id:str):
     docker_service = request.app.state.docker
     return await docker_service.pause_container(container_id, user_id)
+@router.post('/restart/{container_id}/{user_id}')
+async def restart_container(request:Request, container_id:str, user_id:str):
+    docker_service = request.app.state.docker
+    return await docker_service.restart_container(container_id, user_id)
 
 @router.get('/lookup/{user_id}/{subdomain}')
 async def lookup_port(subdomain:str, user_id:str, request:Request):
@@ -72,7 +82,31 @@ async def lookup_port(subdomain:str, user_id:str, request:Request):
             "status":"Error",
             "message":str(e)
         }
+
+
+@router.get('/sessions/active')
+async def get_active_sessions(request: Request):
+    """Get all active sessions"""
+    session_manager = request.app.state.session_service
+    active_sessions = []
     
+    for key in session_manager.redis.scan_iter("session:*"):
+        session_data = session_manager.redis.hgetall(key)
+        if session_data:
+            status = await session_manager.get_session_status(
+                session_data[b'container_id'].decode('utf-8')
+            )
+            if status["status"] == "success" and status["session_info"]["status"] == "active":
+                active_sessions.append(status["session_info"])
+    
+    return {"active_sessions": active_sessions}
+
+    
+@router.post('/session/{container_id}/cleanup')
+async def cleanup_session(container_id: str, request: Request):
+    session_manager = request.app.state.session_service
+    return await session_manager.cleanup_expired_session(container_id)
+
 @router.get('/database')
 async def get_database(request:Request):
     try:

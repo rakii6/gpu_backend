@@ -1,14 +1,16 @@
 import docker
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import BackgroundTasks
 import docker.errors
 from schemas.docker import ContainerRequest, ContainerResponse
 from services.gpu_manager import GPUManager
+from .service_types import SessionManager
 from .firebase_service import FirebaseService
 from .redis import RedisManager
 from .port import PortManager
-import GPUtil
+from datetime import datetime
+import pytz
 
 class DockerService:
     
@@ -48,21 +50,28 @@ class DockerService:
         }
     }
 
-    def __init__(self, gpu_manager: GPUManager, 
-                 firebase_service: FirebaseService,
-                   redis_manager: RedisManager): #here I am passing the class module as params cuz I need access to their methods
+    def __init__(self, gpu_manager: GPUManager, firebase_service: FirebaseService, redis_manager: RedisManager,session_manager=None): #here I am passing the class module as params cuz I need access to their methods
         self.firebase = firebase_service
         self.client = DockerService.docker_client       
         self.gpu_manager = gpu_manager
         self.redis = self.gpu_manager.redis
         self.redis_manager = redis_manager
+        self._session = session_manager
         self.container_store = {}
+
+
         
         try:
             self.client.networks.get("traefik-net")
         except:
             self.client.networks.create("traefik-net", driver="bridge")
 
+    @property
+    def session(self):
+            return self._session
+    @session.setter
+    def session(self, value):
+            self._session = value
 
     async def check_docker(self) -> Dict:
         try:
@@ -102,12 +111,22 @@ class DockerService:
 
     async def create_user_environment(self,request: ContainerRequest,  background_tasks: BackgroundTasks):
         try:
+            print(f"Current session state: {self._session}")
+            print(f"Has session attribute: {'_session' in self.__dict__}")
+            if not hasattr(self, '_session') or self._session is None:
+                    print("waring session manager not Init yet")
+                    return{
+                        "status":"error",
+                        "message":"session mnager not initiated propelly yet"
+                    }
             if request.container_type not in self.IMAGE_CONFIG:
                 return {
             
                     "status": "error",
                     "message": f"Unsupported container type: {request.container_type}"
                 }
+            
+            
             config = self.IMAGE_CONFIG[request.container_type].copy()
 
             try:
@@ -180,13 +199,22 @@ class DockerService:
                 "gpu_ids":free_gpu_ids,
                 "type": request.container_type}
 
+
+                session_result = await self._session.start_session(
+                    user_id=request.user_id,
+                    container_id = container.id,
+                    duration_hours=request.duration,
+                    payment_status=True
+                )
+
                 await self.firebase.store_container_info(request.user_id, container_mapping)# Store in Firebase
 
                 return {
                 "status": "success",
                 "container_id": container.id,
                 "access_url": f"{request.subdomain}.indiegpu.com",
-                "jupyter_token": "mysecret123"}
+                "jupyter_token": "mysecret123",
+                "session":session_result}
         
             except Exception as container_error:
                 await self._cleanup_failed_allocation(container.id, free_gpu_ids)
@@ -219,46 +247,54 @@ class DockerService:
 
     async def cleanup_container(self,container_id: str, user_id:str)->Dict:
         try:
+            gpu_ids = []
             try:
 
-                container_to_clean = self.client.containers.get(container_id)
+                container = self.client.containers.get(container_id)
+                print(f"container is populated")
+                container_info = container.attrs
+                device_requests = container_info["HostConfig"].get("DeviceRequests", [])
+                for devices in device_requests:
+                    if devices.get("Driver") =="nvidia":
+                        gpu_ids = devices.get('DeviceIDs',[])
+                    
+
+                container.stop(timeout=15)
+                container.remove()
             except docker.errors.NotFound:
                 return{
                     "status":"error",
                     "message":f"container{container_id} not found"
                 }
+
+            gpu_release_errors=[]       
+            for gpu_id in gpu_ids:
+                try:
+                    await self.gpu_manager.release_gpu(gpu_id)
+                except Exception as gpu_error:
+                        gpu_release_errors.append(f"Error releasing GPU {gpu_id}: {str(gpu_error)}")
+                        return{
+                                "message":f"Warning: {gpu_release_errors[-1]}"
+                                }
+       
+                ist = pytz.timezone('Asia/Kolkata')
+                ist_time = datetime.now(ist)
+
             try:
-                container_to_clean.stop(timeout=15)
-                container_to_clean.remove()
-            except Exception as e:
-                return{
-                    "status":"error",
-                    "message":f"error in {container_to_clean} stoppage"
-                }
-            
-           
-            for gpu_key in self.redis.scan_iter("gpu:*"):
-                gpu_data = self.redis.hgetall(gpu_key)
-                
-                if gpu_data:
-                    container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
-                    if container_id_value == container_id:
-                        new_state={
-                            "status":"available",
-                            "container_id": "",
-                            "user_id": "",
-                            "allocated_at": ""
-                        }
-                        self.redis.hmset(gpu_key, new_state)
-            try:
-                await self.firebase.update_container_status(user_id, container_id, "terminated")
+                await self.firebase.update_container_status(user_id, container_id, "terminated", ist_time)
+                print("about to hit the cleanup session")
+                result = await self._session.cleanup_expired_session(container_id)
+
                 return {
                 "status": "success",
-                "message": "Container cleaned up successfully"
+                "message": "Container cleaned up successfully",
+                "result_clean":result
             }
 
             except Exception as e:
                    print(f"Firebase update error: {str(e)}")
+            
+        
         
             return{
             "status":"success",
@@ -283,16 +319,18 @@ class DockerService:
                     "Message":"container with that ID not found"
                 }
                 container_to_pause.reload()
+                print(f'contianer paused')
                 if container_to_pause.status == "paused":
                     return{
                         "status":"error",
                         "message":"its already paused bruh"
                     }
+                
                 container_to_pause.pause()
 
             except docker.errors.NotFound:
                 return {
-                "status": "error",
+                "status": "error ",
                 "message": f"Container {container_id} not found"
             }
             except docker.errors.APIError as e:
@@ -305,17 +343,22 @@ class DockerService:
             try: 
                 for gpu_key in self.redis.scan_iter("gpu:*"):
                     gpu_data = self.redis.hgetall(gpu_key)
+                    print(f"Checking GPU: {gpu_key}")
+
                     if gpu_data:
                         container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
+                        print(f"Stored container ID: {container_id_value}")
                         if container_id_value == container_id:
+
                             new_state={
                             "status":"paused",
                             "container_id": container_id,
                             "user_id": user_id,
                             "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
-                        
                         }
-                        self.redis.hmset(gpu_key, new_state)
+                            self.redis.hset(gpu_key,  mapping = new_state)
+                            print(f"Updated state for GPU {gpu_key}") 
+                        
 
                 await self.firebase.update_container_status(user_id, container_id, "paused")
                 return {
@@ -377,7 +420,7 @@ class DockerService:
                                 "user_id": user_id,
                                 "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
                                 }
-                            self.redis.hmset(gpu_key, new_state)
+                            self.redis.hset(gpu_key, mapping=new_state)
                 await self.firebase.update_container_status(user_id, container_id, "running") 
 
                 return{

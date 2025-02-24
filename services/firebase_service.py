@@ -102,14 +102,15 @@ class FirebaseService:
         return [doc.to_dict() for doc in docs]
 
 
-    async def update_container_status(self, user_id:str, container_id:str, status:str):
+    async def update_container_status(self, user_id:str, container_id:str, status:str, end_time:int):
         """Update container Status"""
 
-        doc_ref = self.db.collection('containers').document(user_id)
+        doc_ref = self.db.collection('users').document(user_id)
         doc_ref.update({
-            'status':status,
-            'last_updated':firestore.SERVER_TIMESTAMP
+            f"containers.{container_id}.status":status,
+            f'containers.{container_id}.end_time':end_time
         })
+
     
     async def get_database(self):
         try:

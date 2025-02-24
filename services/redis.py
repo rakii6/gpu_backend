@@ -89,7 +89,7 @@ class RedisManager:
                         }
                         # for field, value in gpu_status.items():
                         #     self.redis.hset(f"gpu:{gpu_id}", field, value)
-                        self.redis.hmset(f"gpu:{gpu.uuid}",gpu_status)
+                        self.redis.hset(f"gpu:{gpu.uuid}",mapping=gpu_status)
                         self.redis.expire(f"gpu:{gpu.uuid}",86400)
                         stored_count += 1
 
@@ -154,7 +154,7 @@ class RedisManager:
             }
             data_str = json.dumps(data)
             
-            self.redis.hmset(key, data)
+            self.redis.hset(key, mapping=data)
             self.redis.expire(key, ttl)
 
             return{
@@ -179,7 +179,7 @@ class RedisManager:
             redis_key = f"entry:{gpu_uid}"
             metric_key = f"metrics:{gpu_uid}"
 
-            self.redis.hmset(redis_key, metrics)
+            self.redis.hset(redis_key, mapping=metrics)
 
             if ttl>0:
                 self.redis.expire(redis_key, ttl)

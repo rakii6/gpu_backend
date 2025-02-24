@@ -35,13 +35,15 @@ class GPUManager:
         all_gpus = GPUtil.getGPUs()
         if gpu_uuid not in [gpu.uuid for gpu in all_gpus]:
             print(f"Warning: Attempting to set state for unknown GPU: {gpu_uuid}")
-            return
+            return {}
+        
         key = f"gpu:{gpu_uuid}"
         self.redis.delete(key)
 
         if state:
-            self.redis.hmset(key, state)
+            self.redis.hset(key, mapping=state)
         print(f"just set the new state for {key}")
+        return state
 
 
 
@@ -107,10 +109,10 @@ class GPUManager:
             'user_id': '',
             'allocated_at': ''
         }
-        updated_state = await self._set_gpu_state(gpu_uuid, new_state)
-        return {
-            "status": "success" if updated_state.get('status') == 'available' else "error",
-            "message": f"GPU {gpu_uuid} released successfully" if updated_state else f"Failed to release GPU {gpu_uuid}"
+        await self._set_gpu_state(gpu_uuid, new_state)
+        return{
+            "status":"success",
+            "message":f"GPU{gpu_uuid} released"
         }
 
     async def get_container_gpus(self, container_id:str)-> List:
