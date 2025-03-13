@@ -1,12 +1,10 @@
-from fastapi import APIRouter, Response, Request, BackgroundTasks
-from services.docker_service import DockerService
-from services.firebase_service import FirebaseService
-from services.port import PortManager
-from services.gpu_manager import GPUManager
-from services.redis import RedisManager
+from fastapi import APIRouter, Response, Request, BackgroundTasks, Depends, HTTPException
+from security.authorization_service import AuthorizationService
 from typing import Dict
 from schemas.docker import ContainerRequest
 import GPUtil
+from datetime import datetime
+import pytz
 
 router = APIRouter(prefix="/docker")
 # firebase_service = FirebaseService()
@@ -46,19 +44,34 @@ async def get_container_session_status(container_id:str, request:Request):
     session_manager = request.app.state.session_service
     return await session_manager.get_session_status(container_id)
 
+
+
+#dependency for Authorization, this like checks before a route gets executed
+def get_auth_service(request : Request) -> AuthorizationService:
+    firebase_service = request.app.state.firebase
+    return AuthorizationService(firebase_service)
+
+
+async def require_container_access(container_id:str, user_id:str, auth_service: AuthorizationService = Depends(get_auth_service)):
+    if not await auth_service.can_access_container(user_id, container_id):
+        raise HTTPException(status_code=403, detail="Access Denied")
+    return True
+
+
+
     
 
-@router.post('/stop/container/{container_id}/{user_id}')
-async def cleanup_container(request:Request, container_id:str, user_id:str):
+@router.post('/stop_container/{container_id}/{user_id}')
+async def cleanup_container(request:Request, container_id:str, user_id:str, _: bool = Depends(require_container_access)):
     docker_service = request.app.state.docker
     return await docker_service.cleanup_container(container_id, user_id)
 
 @router.post('/pause_container/{container_id}/{user_id}')
-async def pause_container(request:Request, container_id:str, user_id:str):
+async def pause_container(request:Request, container_id:str, user_id:str, _: bool = Depends(require_container_access)):
     docker_service = request.app.state.docker
     return await docker_service.pause_container(container_id, user_id)
-@router.post('/restart/{container_id}/{user_id}')
-async def restart_container(request:Request, container_id:str, user_id:str):
+@router.post('/restart_container/{container_id}/{user_id}')
+async def restart_container(request:Request, container_id:str, user_id:str, _: bool = Depends(require_container_access)):
     docker_service = request.app.state.docker
     return await docker_service.restart_container(container_id, user_id)
 
@@ -84,24 +97,53 @@ async def lookup_port(subdomain:str, user_id:str, request:Request):
         }
 
 
+
+
+
+
 @router.get('/sessions/active')
 async def get_active_sessions(request: Request):
     """Get all active sessions"""
     session_manager = request.app.state.session_service
     active_sessions = []
     
-    for key in session_manager.redis.scan_iter("session:*"):
-        session_data = session_manager.redis.hgetall(key)
-        if session_data:
-            status = await session_manager.get_session_status(
-                session_data[b'container_id'].decode('utf-8')
-            )
-            if status["status"] == "success" and status["session_info"]["status"] == "active":
-                active_sessions.append(status["session_info"])
+    for key in session_manager.redis.scan_iter("session:*:*"):
+        session_key = key.decode('utf-8')
+        # Parse out user_id and container_id from the key
+        parts = session_key.split(':')
+        if len(parts) == 3:  # Format is "session:user_id:container_id"
+            user_id = parts[1]
+            container_id = parts[2]
+            
+            session_data = session_manager.redis.hgetall(key)
+            if session_data:
+                session_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in session_data.items()}
+                
+                # Calculate if session is still active
+                try:
+                    end_time = datetime.fromisoformat(session_data.get('end_time', ''))
+                    ist = pytz.timezone('Asia/Kolkata')
+                    current_time = datetime.now(ist)
+                    is_active = current_time < end_time
+                    
+                    if is_active:
+                        active_sessions.append({
+                            "container_id": container_id,
+                            "user_id": user_id,
+                            "start_time": session_data.get('start_time'),
+                            "end_time": session_data.get('end_time'),
+                            "duration_hours": session_data.get('duration_hours'),
+                            "status": "active"
+                        })
+                except Exception as e:
+                    print(f"Error processing session {session_key}: {str(e)}")
     
     return {"active_sessions": active_sessions}
 
-    
+
+
+
+
 @router.post('/session/{container_id}/cleanup')
 async def cleanup_session(container_id: str, request: Request):
     session_manager = request.app.state.session_service
@@ -169,30 +211,7 @@ async def lookup_port(subdomain: str, response: Response, request: Request):
         print(f"Error in lookup: {str(e)}")
         response.status_code = 500
         return {"status": "error", "message": str(e)}
-    
-        
-            
-            
-        
-    
-        
-            
-            
-       
-
-        
-    
-
-
-#Test endpoints:
-
-# @router.post('/test/jupyter')
-# async def test_jupyter_container():
-#     try:
-#         container_data = await docker_service.create_user_environment(
-
-#         )
-
+  
 @router.post('/test/create-user')
 async def create_test_user(request:Request):
     """Create a test user and return their ID"""

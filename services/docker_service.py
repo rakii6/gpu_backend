@@ -1,16 +1,15 @@
 import docker
-import threading
 from typing import Dict, Any, List, Optional
 from fastapi import BackgroundTasks
 import docker.errors
 from schemas.docker import ContainerRequest, ContainerResponse
 from services.gpu_manager import GPUManager
-from .service_types import SessionManager
 from .firebase_service import FirebaseService
 from .redis import RedisManager
-from .port import PortManager
 from datetime import datetime
-import pytz
+from firebase_admin import firestore
+import pytz, arrow
+import os
 
 class DockerService:
     
@@ -49,6 +48,7 @@ class DockerService:
             
         }
     }
+ 
 
     def __init__(self, gpu_manager: GPUManager, firebase_service: FirebaseService, redis_manager: RedisManager,session_manager=None): #here I am passing the class module as params cuz I need access to their methods
         self.firebase = firebase_service
@@ -105,12 +105,11 @@ class DockerService:
                 "message": str(e)
             }
         
-  
-
-
 
     async def create_user_environment(self,request: ContainerRequest,  background_tasks: BackgroundTasks):
+        container = None
         try:
+            print(f"Starting container creation for user: {request.user_id}, type: {request.container_type}")
             print(f"Current session state: {self._session}")
             print(f"Has session attribute: {'_session' in self.__dict__}")
             if not hasattr(self, '_session') or self._session is None:
@@ -126,10 +125,11 @@ class DockerService:
                     "message": f"Unsupported container type: {request.container_type}"
                 }
             
-            
+            print("Getting container config...")
             config = self.IMAGE_CONFIG[request.container_type].copy()
 
             try:
+                print("Checking if image exists...")
                 self.client.images.get(config["image"])
             except docker.errors.ImageNotFound:
                 return{
@@ -137,7 +137,7 @@ class DockerService:
                     "message": "Image pull in progress. Please try again in a few minutes.",
                     "image": config['image']
                 }                
-        
+            print(f"Checking GPU availability for {request.gpu_count} GPUs...")
             free_gpu_ids = await self.gpu_manager.check_gpu_availability(request.gpu_count) #call here the asiisgn_gpu, returns a list
 
             #here we have a bug, we are just getting the list and not checking the failure status
@@ -145,7 +145,9 @@ class DockerService:
             if isinstance(free_gpu_ids, dict):
                 return free_gpu_ids
             
+            print(f"Found available GPUs: {free_gpu_ids}")
             safe_subdomain = request.subdomain.lower()
+            print(f"Using subdomain: {safe_subdomain}")
                  #Trafix labels
             labels={
                 "traefik.enable": "true",
@@ -158,8 +160,10 @@ class DockerService:
             try:
                 container = self.client.containers.create(  # Create container
                 image=config["image"],
+                volumes=self.get_user_volumes(request.user_id),
                 environment=[*config["env"],
                              f"NVIDIA_VISIBLE_DEVICES={','.join(map(str, free_gpu_ids))}"],
+                          
                 command=config["command"],
                 labels=labels,
                 network="traefik-net",
@@ -170,6 +174,16 @@ class DockerService:
                         "DeviceIDs":free_gpu_ids
                     }
                 ])
+                if not container:
+                    return {
+                        "status": "error",
+                        "message": "Container creation failed - Docker returned None"
+                            }
+                
+                print(f"Container created successfully: {container.id}")
+
+
+
 
                 allocation_errors= [] 
                 for gpu_uuid in free_gpu_ids:#this section is to tell the gpu manager, that contaier with gpuuid and user_id to be updated in redis
@@ -181,6 +195,7 @@ class DockerService:
                     )
                     if allocation_results.get('status')== 'error':
                         allocation_errors.append(allocation_results['message'])
+                print("gpu allocated success")
 
                 if allocation_errors:
                     await self._cleanup_failed_allocation(container.id, free_gpu_ids)
@@ -191,23 +206,32 @@ class DockerService:
                  
                 container.start()
                 container.reload()  # Refresh container info
+                print("container starting")
+
+                dt = arrow.utcnow()
+                expired_time = dt.shift(hours=request.duration)
                 
-                container_mapping = {  
+
+                container_data = {  
                 "user_id": request.user_id,
                 "container_id": container.id,
                 "subdomain": request.subdomain,
                 "gpu_ids":free_gpu_ids,
-                "type": request.container_type}
-
+                "type": request.container_type,
+                "created_at":dt.datetime,
+                "expires_at":expired_time.datetime,
+                "gpu_count":len(free_gpu_ids)}
+                print("contianer mapped")
+                
 
                 session_result = await self._session.start_session(
                     user_id=request.user_id,
                     container_id = container.id,
-                    duration_hours=request.duration,
+                    duration_hours=request.duration, #needs changeing
                     payment_status=True
                 )
-
-                await self.firebase.store_container_info(request.user_id, container_mapping)# Store in Firebase
+                print("session result achecived")
+                await self.firebase.store_container_info(container.id, container_data)# Store in Firebase
 
                 return {
                 "status": "success",
@@ -217,15 +241,47 @@ class DockerService:
                 "session":session_result}
         
             except Exception as container_error:
-                await self._cleanup_failed_allocation(container.id, free_gpu_ids)
-                raise container_error
+                print(f"Container creation error: {str(container_error)}")
+                if container:
+                    await self._cleanup_failed_allocation(container.id, free_gpu_ids)
+                return {
+                "status": "error",
+                "message": f"Container creation failed: {str(container_error)}"
+            }
                
         except Exception as e:
-            # print(f"Environment creation error: {str(e)}")
+            print(f"Environment creation error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {
-            "status": "error",
+            "status": "error from enviromnet creation",
             "message": str(e)
         }
+
+    def get_user_volumes(self, user_id):
+        user_data_dir = f"/home/rakii06/user_data/{user_id}"
+
+        try:
+            os.makedirs(user_data_dir, exist_ok=True)
+            os.makedirs(f"{user_data_dir}/logs", exist_ok=True)
+            os.makedirs(f"{user_data_dir}/data", exist_ok=True)
+        except PermissionError:
+            print(f"Permission error creating {user_data_dir} - check permissions")
+            return {}
+        except Exception as e:
+            print(f"Error creating user directory: {str(e)}")
+            return {}
+    
+        return {
+            user_data_dir:{'bind':'/app', 'mode':'rw'},
+            '/home/rakii06/Docker-python/DockerFiles/logs':{'bind':'/app/logs','mode':'rw'},
+            '/home/rakii06/Docker-python/DockerFiles/config':{'bind':'/app/config', 'mode':'ro'},
+            '/home/rakii06/Docker-python/DockerFiles/static':{'bind':'/app/static','mode':'ro'}
+        }
+
+
+
+
 
     async def _cleanup_failed_allocation(self, container_id: str, gpu_ids: List[str]):
         """Cleanup resources if container creation fails"""
@@ -247,19 +303,21 @@ class DockerService:
 
     async def cleanup_container(self,container_id: str, user_id:str)->Dict:
         try:
+            print(f"CLEANUP: Starting cleanup for container {container_id}, user {user_id}")
             gpu_ids = []
             try:
-
+                print(f"CLEANUP: Getting container from Docker API")
                 container = self.client.containers.get(container_id)
-                print(f"container is populated")
+                print(f"CLEANUP: Container found with status: {container.status}")
                 container_info = container.attrs
                 device_requests = container_info["HostConfig"].get("DeviceRequests", [])
                 for devices in device_requests:
                     if devices.get("Driver") =="nvidia":
                         gpu_ids = devices.get('DeviceIDs',[])
                     
-
+                print(f"CLEANUP: Stopping container {container_id}")
                 container.stop(timeout=15)
+                print(f"CLEANUP: Container stopped, now removing")
                 container.remove()
             except docker.errors.NotFound:
                 return{
@@ -281,9 +339,9 @@ class DockerService:
                 ist_time = datetime.now(ist)
 
             try:
-                await self.firebase.update_container_status(user_id, container_id, "terminated", ist_time)
+                await self.firebase.update_container_status( container_id, "terminated", {"termination_time(ist)":ist_time})
                 print("about to hit the cleanup session")
-                result = await self._session.cleanup_expired_session(container_id)
+                result = await self._session.cleanup_expired_session(container_id, user_id)
 
                 return {
                 "status": "success",
@@ -318,6 +376,7 @@ class DockerService:
                     "status":"error",
                     "Message":"container with that ID not found"
                 }
+                
                 container_to_pause.reload()
                 print(f'contianer paused')
                 if container_to_pause.status == "paused":
@@ -360,7 +419,7 @@ class DockerService:
                             print(f"Updated state for GPU {gpu_key}") 
                         
 
-                await self.firebase.update_container_status(user_id, container_id, "paused")
+                await self.firebase.update_container_status(container_id, "paused")
                 return {
                 "status": "success",
                 "message": f"Container {container_id} paused successfully"
@@ -421,7 +480,7 @@ class DockerService:
                                 "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
                                 }
                             self.redis.hset(gpu_key, mapping=new_state)
-                await self.firebase.update_container_status(user_id, container_id, "running") 
+                await self.firebase.update_container_status(container_id, "active") 
 
                 return{
                     "status": "success",
@@ -438,7 +497,7 @@ class DockerService:
                 "message":str(e)
             }
 
-                    
+
                         
 
 

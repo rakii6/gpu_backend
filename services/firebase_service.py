@@ -1,8 +1,8 @@
 from dotenv import load_dotenv
-import os
+import os, arrow
 import firebase_admin
 from firebase_admin import credentials, firestore
-from typing import Dict
+from typing import Dict,  Optional, Any
 load_dotenv()
 cred_path=os.getenv("FIREBASE_CREDENTIAL_PATH")
 
@@ -29,71 +29,38 @@ class FirebaseService:
         
         
 
-    async def store_container_info(self, user_id:str, container_data:Dict):
-        """Store container information for a user"""
-
+    async def store_container_info(self, container_id:str, container_data:Dict):
+        """Create a new container record"""
 
         try:
-            #need to verify  if user exists or not
-            user_ref =self.db.collection('users').document(user_id)
-            user=user_ref.get()
-
-            if not user.exists:
-                return{"Status":"error", "message":"user not founnd,"}
-            
-            #then we need to store the info of that user
-            #in the exisiting user documnet
-
-            # container_ref = self.db.collection('containers').document(container_data['container_id'])
-            # container_ref.set({
-            #     'user_id':user_id,
-            #     'container_id':container_data['container_id'],
-            #     'created_at': firestore.SERVER_TIMESTAMP,
-            #     'status':'active'
-            # })
+            required_fields = ['user_id', 'container_id','type','subdomain']
+            for field in required_fields:
+                if field not in container_data:
+                    return{
+                        "status":"error",
+                        "Message":"Bruh missing fields"
+                    }
+            if 'created_at' not in container_data:
+                container_data['created_at']= arrow.utcnow()
             
 
-            #updating the user's containers list
-            # user_ref.update({
-            #     'containers':firestore.firestore.ArrayUnion([{
-            #         'container_id':container_data['container_id'],
-            #         'subdomain':container_data.get('subdomain'),
-            #         'created_at': firestore.SERVER_TIMESTAMP,
-            #         'status':'active',
-            #         'resource_usage':{
-            #             'gpu_allocated':True,
-            #             'port':container_data.get('port')
-            #         }
-            #     }])
-            # })
-            
-            if not user.get('containers'):
-                user_ref.set({
-                    'containers':[container_data]
-                }, merge=True)
-            else:
-                user_ref.update({
-                    'containers': firestore.ArrayUnion([container_data])
-                })
 
-            return{"status":"success","message":"Contaiiner info stoored"}
+
+            container_ref = self.db.collection('containers').document(container_id)
+            container_ref.set(container_data)
+            return{
+                "status":'success',
+                "message":"Container created Successfully",
+                "container_id":container_id
+            }
         except Exception as e:
-            return{"status":"error","Message":str(e)}
+            return{
+                "status":"error",
+                "message":f"Failed to create and store the container in fireDB {str(e)}"
+            }
 
 
-
-        # doc_ref=self.db.collection('containers').document(user_id)
-        
-        # doc_ref.set({
-        #     'container_id':container_data['container_id'],
-        #     'subdomain':container_data['subdomain'],
-        #     'created_at':firestore.SERVER.TIMESTAMP,
-        #     'status':'active',
-        #     'resource_usage':{
-        #         'gpu_allocated':True,
-        #         'port':container_data['port']
-        #     }
-        # }) this piece of code creates a new collection 
+      
 
 
     async def get_user_container(self, user_id:str):
@@ -102,75 +69,69 @@ class FirebaseService:
         return [doc.to_dict() for doc in docs]
 
 
-    async def update_container_status(self, user_id:str, container_id:str, status:str, end_time:int):
+    async def update_container_status(self, container_id:str, status:str, additional_data:Optional[Dict[str, Any]]=None):
+
         """Update container Status"""
-
-        doc_ref = self.db.collection('users').document(user_id)
-        doc_ref.update({
-            f"containers.{container_id}.status":status,
-            f'containers.{container_id}.end_time':end_time
-        })
-
-    
-    async def get_database(self):
         try:
-            collection_ref = self.db.collection('users')
-            docs = collection_ref.stream()
-            documents = {doc.id: doc.to_dict() for doc in docs}
-          
+            container_ref = self.db.collection('containers').document(container_id)
+            container = container_ref.get()
 
-
-            return documents
-        except Exception as e:
-            return{
-                "status":"failed",
-                "Message":str(e)
+            if not container.exists:
+                return{
+                    'status':"error",
+                    "message":f"container with {container_id} id not found in the db"
+                }
+            update_data = {
+                'status':status,
+                'last_active':arrow.utcnow()
             }
-
-
-
-
-    async def get_container_by_subdomain(self,subdomain):
-        try:
-            print(f"Looking for subdomain: {subdomain}")
-            users_ref = self.db.collection('users')
-            users = users_ref.get()
-
-            print(f"Number of users found: {len(list(users))}")
-          
-            for user_doc in users:
-                print(f"\nRaw user_doc data for {user_doc.id}:")
-                print(f"Reference path: {user_doc.reference.path}")
-                print(f"Raw data: {user_doc.to_dict()} \n")
-                direct_doc = self.db.document(user_doc.reference.path).get()
-                print(f"Direct document data: {direct_doc.to_dict()}")
-               
+            if additional_data:
+                update_data.update(additional_data) #method to add another entry in dict
                 
-                user_data = direct_doc.to_dict()
-
-                if 'containers' in user_data:
-                    containers = user_data['containers']
-                    for container in containers:
-                        if container.get('subdomain') == subdomain:
-                            return {
-                                "status": "success",
-                                "port": container.get('port'),
-                                "container_id": container.get('container_id'),
-                                "user_id": user_doc.id
-                        }
-                        
-
+            container_ref.update(update_data)
+            
             return{
-                "status":"failed",
-                "message":" subdomain not found"
+                'status':'success',
+                'message':f'container status updated to {container_id} id'
             }
-           
         except Exception as e:
             return{
-                "status"
-            }     
+                'status':'error',
+                'message':f'Failed to update the container with {container_id}'
+            }
+
+       
+
+    async def get_users_containers(self, user_id:str)->Dict:
+        """Get all the containers assocaited with that 
+        particular user, using their user_id as a param,
+        and searching it in the containers collection in firebase"""
+
+        
+        try:
+            containers = self.db.collection('containers').where('user_id','==', user_id).stream()
+            # container_list = [{"id":doc.id, **doc.to_dict()} for doc in containers]
+            container_list = []
+            for doc in containers:
+                container_dict = {"id":doc.id}
+                container_dict.update(doc.to_dict())
+                container_list.append(container_dict)
+
+            return{
+                "status":"success",
+                "containers":container_list,
+                "count":len(container_list)
+            }
+        except Exception as e:
+            return{
+                "status":"Error",
+                "message":f"Failed to get user containers {str(e)}"
+            }
 
 
+
+    # async def get_container_by_subdomain(self,subdomain):
+        
 
 
 

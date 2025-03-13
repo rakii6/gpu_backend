@@ -27,6 +27,10 @@ class RedisManager:
                 port=6379,
                 password=redis_love
                 )
+
+                RedisManager.redis_client.config_set('notify-keyspace-events', 'Ex')
+                print("Key space notification enabled")
+
                 RedisManager.is_connected = True
                 print("Redis connection established")
                 

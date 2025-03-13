@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
+# from middleware.auth_middleware import verify_token
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from api.routes import docker,general
+from api.routes import authentication_router, docker,general
 from config.setting import CORS_CONFIG
 from services.gpu_manager import GPUManager
 from services.redis import RedisManager
@@ -12,6 +13,7 @@ from services.firebase_service import FirebaseService
 from services.docker_service import DockerService
 from security.rate_limiter import RateLimiter
 from services.session_manager import SessionManager
+from security.authorization_service import AuthorizationService
 
 redis_manager = RedisManager() #only one universal redis client connection is created
 firebase_service = FirebaseService() #only onefirebase client is created.
@@ -33,6 +35,7 @@ async def lifespan(app:FastAPI):
 
 
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
+    authorization_service = AuthorizationService(firebase_service)
     print("Docker Service initialized")
 
     print("Before linking:")
@@ -52,6 +55,7 @@ async def lifespan(app:FastAPI):
     app.state.docker = docker_service
     app.state.gpu = gpu_manager
     app.state.session_service = session_manager
+    app.state.authorization_service = authorization_service
 
 
 
@@ -75,8 +79,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
                 status_code = 404,
                 content={
-                    "message":"Nothing to see here. Please disperse.",
-                    "suggestions":"Maybe try being productive with your life ~UwU"
+                    "message":"Please don't DDOS me :<",
+                    "suggestions":"Please don't DDOS me, barely making things work ~UwU"
                 }
 
             )
@@ -93,8 +97,10 @@ app = FastAPI(lifespan=lifespan)
 rate_limiter = RateLimiter(redis_manager)
 app.add_middleware(RateLimitMiddleware, rate_limiter=rate_limiter)
 app.add_middleware(CORSMiddleware, **CORS_CONFIG)
+# app.middleware("http")(verify_token)
 app.include_router(general.router)
 app.include_router(docker.router)
+app.include_router(authentication_router.router)
 
 
 if __name__ == "__main__":

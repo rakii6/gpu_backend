@@ -4,7 +4,9 @@ from .service_types import DockerService
 from .gpu_manager import GPUManager
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-import docker.errors
+import pytz
+import asyncio
+
 class SessionManager:
 
     def __init__(self, redis_manager:RedisManager, firebase_service:FirebaseService, gpu_manager: GPUManager, docker_service: Optional[DockerService] = None ):
@@ -13,7 +15,10 @@ class SessionManager:
         self.firebase = firebase_service
         self.gpu_manager = gpu_manager
         self._docker = docker_service
-        print(f"Session Manager initialized with docker: {docker_service is not None}")
+        self.pubsub = self.redis.pubsub()
+
+        asyncio.create_task(self._start_expiry_listener())
+        # print(f"Session Manager initialized with docker: {docker_service is not None}")
         
     @property
     def docker(self):
@@ -34,47 +39,38 @@ class SessionManager:
         Store session info in Redis with expiry
             Set up monitoring
                 Return session details"""
+        # self.pubsub.subscribe('__keyevent@0__:expired')
         try:
-                session_key = f"session:{container_id}" #this is important
+                session_key = f"session:{user_id}:{container_id}" #this is important
 
                 if self.redis.exists(session_key):
                     return{
                         "status":"error",
                         "message":"session  already exsists for this container"
                     }
-                
-                current_time = datetime.now()
+                ist = pytz.timezone('Asia/Kolkata')
+                current_time = datetime.now(ist)
                 end_time = current_time + timedelta(hours=duration_hours) #time delta is a python class to add or sub time from the present time.
-
+                print(f"this is the {end_time}&{current_time}")
+                
                 
                 
                 session_data = {
                     "container_id":container_id,
                     "payment_status": "paid" if payment_status else "unpaid", #this is important
-                    "user_id":user_id,
+                    # "user_id":user_id,
                     "start_time":current_time.isoformat(),
                     "end_time":end_time.isoformat(),
                     "duration_hours":str(duration_hours),
                     "status":"active"
-
-
                 }
+                print("session data created from session method")
                 self.redis.hset(session_key, mapping=session_data)
-                self.redis.expire(session_key, duration_hours * 3600)
+                self.redis.expire(session_key, duration_hours*3600) #pubsub key event notification, #remeber to change
+              
 
 
-
-                try:
-                    await self.firebase.update_container_status(
-                        user_id,
-                        container_id,
-                        "active",                   #this block is to store to firebase 
-                        {"session_end":end_time.isoformat()}
-                    )
-                except Exception as firebase_error:
-                    return{
-                        "message":f"firebase update failed{str(firebase_error)}"
-                    }
+               
                 
 
                 return {
@@ -97,22 +93,28 @@ class SessionManager:
     async def get_session_status(self, container_id: str) -> Dict:
         """Get remaining time and status for a container session"""
         try:
-            session_key = f"session:{container_id}"
-
-            if not self.redis.exists(session_key):
+            session_key = None
+            for key in self.redis.scan_iter(f"session:*:{container_id}"):
+                session_key = key.decode('utf-8')
+                break
+            if not session_key:
                  return{
                       "status":"error",
-                      "message":f"No active session for the container {container_id}"
+                      "message": f"No active session for the container ID with{container_id}"
                  }
+            parts = session_key.split(':')
+            user_id = parts[1]
 
+            session_data = self.redis.hgetall(session_key)
+            session_data = {k.decode():v.decode() for  k,v in session_data}
 
-            session_data= self.redis.hgetall(session_key)
-            session_data = {k.decode():v.decode() for k,v in session_data.items()}
-            end_time = datetime.isoformat(session_data['end_time'])
-            current_time =datetime.now()
-            time_remaining = (end_time-current_time).total_seconds()
+            end_time = datetime.fromisoformat(session_data['end_time'])
+            ist = pytz.timezone('Asia/Kolkata')
+            current_time = datetime.now(ist)
+            time_remaining = (end_time - current_time).total_seconds()
+            session_status = "active" if time_remaining > 0 else "expired"            
 
-            session_status = "active" if time_remaining > 0 else "expired"
+        
                 
             
             
@@ -120,9 +122,9 @@ class SessionManager:
             "status": "success",
             "session_info": {
                 "container_id": container_id,
-                "user_id": session_data['user_id'],
+                "user_id": user_id,
                 "start_time": session_data['start_time'],
-                "end_time": session_data['end_time'],
+                "end_time": end_time,
                 "duration_hours": session_data['duration_hours'],
                 "status": session_status
             },
@@ -207,7 +209,7 @@ class SessionManager:
 
         pass
 
-    async def cleanup_expired_session(self, container_id: str) -> Dict:
+    async def cleanup_expired_session(self, container_id: str, user_id:str) -> Dict:
         """ Clean up an expired session and its resources
     
     Steps:
@@ -217,7 +219,7 @@ class SessionManager:
     4. Update status in Firebase
     5. Clean up Redis entries"""
         try:
-            session_key = f"session:{container_id}"
+            session_key = f"session:{user_id}:{container_id}"
             print("session key is collected")
             if self.redis.exists(session_key):
                  print(f"session is key being deleted")
@@ -241,6 +243,36 @@ class SessionManager:
                 "message": f"Cleanup failed: {str(e)}"
             }
 
+    async def _start_expiry_listener(self):
+          """Background task to listen for Redis key expiration events 
+          and then stop the docker container by  calling a method"""
+
+          self.pubsub.subscribe('__keyevent@0__:expired')
+          try:
+               while True:
+                    message = self.pubsub.get_message(timeout=1.0)
+                    if message and message['type'] == 'message':
+                         expired_key = message['data'].decode('utf-8')
+                         if expired_key.startswith('session:'):
+                              parts = expired_key.split(':')#classic split technique and gettin continaer id
+                              if len(parts) == 3:
+                                   user_id=parts[1]
+                                   container_id= parts[2]
+                                   print(f"Session expired for container {container_id}, user {user_id}")
+                                   if self.docker:
+                                        await self._docker.cleanup_container(container_id, user_id)
+                                   else:
+                                        print("ERROR: Docker service not available!")
+                                        
+
+                              
+                # Small sleep to prevent CPU spinning
+                    await asyncio.sleep(0.1)
+          except Exception as e:
+                print("Yeah we failed to delete the session key automatically")
+                asyncio.create_task(self._start_expiry_listener())
+               
+         
                                 
                         
                  
