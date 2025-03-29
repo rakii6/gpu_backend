@@ -2,11 +2,13 @@ from dotenv import load_dotenv
 import os
 import redis
 from datetime import datetime
+import asyncio
 import time
 import json
 import GPUtil
 import threading
 import traceback
+from services.system_metrics import System_Metrics
 load_dotenv()
 redis_love=os.getenv("REDIS_LOVER")
 
@@ -17,7 +19,7 @@ class RedisManager:
     is_connected =False
     redis_client =None
 
-    def __init__(self):
+    def __init__(self, system_metrics :System_Metrics ):
         if not RedisManager.is_connected:
             print("RedisManager initialization called from:", traceback.format_stack()[-2])
             try:
@@ -42,6 +44,7 @@ class RedisManager:
                 raise
         self.redis = RedisManager.redis_client
         self.gpu_lock = threading.Lock()
+        self.system_metrics = system_metrics
 
         
     
@@ -51,12 +54,12 @@ class RedisManager:
 
                 time.sleep(1)
 
-                # import subprocess
-                # try:
-                #     subprocess.run(['nvidia-smi'], check=True)
-                # except subprocess.CalledProcessError as e:
-                #     print(f"nvidia-smi failed: {e}")
-                #     return
+                import subprocess
+                try:
+                    subprocess.run(['nvidia-smi'], check=True)
+                except subprocess.CalledProcessError as e:
+                    print(f"nvidia-smi failed: {e}")
+                    return
 
                 try:
 
@@ -73,36 +76,60 @@ class RedisManager:
                     self.redis.delete(key)
                 stored_count = 0
 
+
+                
+                system_data =   self.system_metrics.send_stats()
+                print("system data recieved")
+                gpu_details_by_index ={}
+                for gpu in system_data["gpu_details"]:
+                    device_index = gpu["device_index"]
+                    gpu_details_by_index[device_index]=gpu
+
               
 
-                for gpu in GPUS:
+                for i,gpu in enumerate(GPUS):
                     try:
 
-                        if not hasattr(gpu, 'uuid'):
-                            continue
+                            if not hasattr(gpu, 'uuid'):
+                                continue
+                            
+                            gpu_detail = gpu_details_by_index.get(i)
+                            if not gpu_detail:
+                                print(f"Warning: No matching system metric data for GPU {i}")
+                                continue
 
-                        gpu_status ={
+                            gpu_status ={
+                                "cuda_cores":gpu_detail["performance"]["cuda_cores_count"],
+                                "tflops_fp32":gpu_detail["performance"]["tflops_fp32"],
+                                "clock_speed_mhz":gpu_detail["performance"]["clock_speed_mhz"],
+                                "memory_clock_mhz":gpu_detail["performance"]["memory_clock_mhz"],
+                                "pcie_generation":gpu_detail["pcie"]["generation"],
+                                "pcie_lanes":gpu_detail["pcie"]["lanes"],
+                                "pcie_rx_mbs":gpu_detail["pcie"]["rx_mbs"],
+                                "pcie_tx_mbs":gpu_detail["pcie"]["tx_mbs"],
+                                "memoryFree": str(gpu.memoryFree),
+                                "memoryTotal": str(gpu.memoryTotal),
+                                "memoryUsed": str(gpu.memoryUsed),
+                                "bandwidth_gbs":gpu_detail["memory"]["bandwidth_gbs"],
+                                "bus_width_bit":gpu_detail["memory"]["bus_width_bit"],
+                                "status": "available" if gpu.memoryFree > 1000 else "in_use",
+                                "container_id": "",     # Empty string for no container
+                                "user_id": "",          # Empty string for no user
+                                "allocated_at": ""  # Simple rule
+                            }
+                            # for field, value in gpu_status.items():
+                            #     self.redis.hset(f"gpu:{gpu_id}", field, value)
+                            self.redis.hset(f"gpu:{gpu.uuid}",mapping=gpu_status)
+                            self.redis.expire(f"gpu:{gpu.uuid}",86400)
+                            stored_count += 1
 
-                            "memoryFree": str(gpu.memoryFree),
-                            "memoryTotal": str(gpu.memoryTotal),
-                            "memoryUsed": str(gpu.memoryUsed),
-                            "status": "available" if gpu.memoryFree > 1000 else "in_use",
-                            "container_id": "",     # Empty string for no container
-                            "user_id": "",          # Empty string for no user
-                            "allocated_at": ""  # Simple rule
-                        }
-                        # for field, value in gpu_status.items():
-                        #     self.redis.hset(f"gpu:{gpu_id}", field, value)
-                        self.redis.hset(f"gpu:{gpu.uuid}",mapping=gpu_status)
-                        self.redis.expire(f"gpu:{gpu.uuid}",86400)
-                        stored_count += 1
-
-                        
+                            
                     except Exception as e:
                         print(f"Error processing GPU {getattr(gpu, 'id', 'unknown')}: {e}")
                         continue
 
 
+                        
 
                 
                 print(f"Stored {stored_count} out of {len(GPUS)} GPUs")
@@ -115,14 +142,16 @@ class RedisManager:
     def run_periodic_update(self):#function to run redis overlord very 10mins
         while True:
             self.redis_overlord()
-            # self.test_gpu_detection()
-            time.sleep(1800)
+            time.sleep(2000)
     def start_gpu_status_update(self):# Background thread to start the periodic update
-        status_update_thread = threading.Thread(target=self.run_periodic_update)
+        # task = asyncio.create_task(self.run_periodic_update())
+        status_update_thread = threading.Thread(target= self.run_periodic_update)   
         status_update_thread.daemon = True #background
-        status_update_thread.start()
+        status_update_thread.start()  
         return status_update_thread
+        # return task
                 
+
 
 
     async def test_connection(self):

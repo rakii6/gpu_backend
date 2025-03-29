@@ -5,7 +5,7 @@ module.exports = {
       args: "main:app --host 0.0.0.0 --port 8080",
       interpreter: "python3",
       watch: true,
-      cwd: "/home/rakii06/Docker-python",
+      cwd: "/home/rakii06/Docker-python/env/bin/python3",
       max_restarts: 10,
       restart_delay: 3000
     },

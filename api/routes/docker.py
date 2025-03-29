@@ -217,3 +217,39 @@ async def create_test_user(request:Request):
     """Create a test user and return their ID"""
     firebase_service = request.app.state.firebase
     return await firebase_service.create_test_user()
+# Add this to your docker_router.py file
+
+@router.get('/containers/resources')
+async def get_container_resources(request: Request):
+    """Get resource usage stats for all running containers"""
+    docker_service = request.app.state.docker
+    stats = await docker_service.monitor_container_resources()
+    
+    # Calculate system-wide usage
+    total_containers = len(stats)
+    if total_containers > 0:
+        total_mem_used = sum(s['memory_usage_gb'] for s in stats)
+        total_mem_limit = sum(s['memory_limit_gb'] for s in stats)
+        avg_cpu_percent = sum(s['cpu_usage_percent'] for s in stats) / total_containers
+        
+        system_stats = {
+            "total_containers": total_containers,
+            "total_memory_used_gb": round(total_mem_used, 2),
+            "total_memory_allocated_gb": round(total_mem_limit, 2),
+            "memory_utilization_percent": round((total_mem_used / total_mem_limit * 100) if total_mem_limit > 0 else 0, 2),
+            "avg_cpu_utilization_percent": round(avg_cpu_percent, 2)
+        }
+    else:
+        system_stats = {
+            "total_containers": 0,
+            "total_memory_used_gb": 0,
+            "total_memory_allocated_gb": 0,
+            "memory_utilization_percent": 0,
+            "avg_cpu_utilization_percent": 0
+        }
+    
+    return {
+        "status": "success",
+        "system_stats": system_stats,
+        "container_stats": stats
+    }

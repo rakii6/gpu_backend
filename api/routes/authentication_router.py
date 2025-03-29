@@ -134,3 +134,23 @@ async def reset_password(request : ResetPasswordRequest, response: Response):
             detail="Something went wrong, try again later"
         )
 
+@router.post("/logout")
+async def logout(response:Response):
+
+    try:
+        response.delete_cookie(
+            key="access_token",
+            httponly=True,
+            secure=True,
+            samesite="lax"
+        )
+        return{
+            "status":"success",
+            "message":"logged out successfully."
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f'Logout Failed: {str(e)}'
+
+        )

@@ -14,12 +14,17 @@ from services.docker_service import DockerService
 from security.rate_limiter import RateLimiter
 from services.session_manager import SessionManager
 from security.authorization_service import AuthorizationService
+from services.system_metrics import System_Metrics
 
-redis_manager = RedisManager() #only one universal redis client connection is created
+
+system_metrics = System_Metrics()
+
+redis_manager = RedisManager(system_metrics) #only one universal redis client connection is created
 firebase_service = FirebaseService() #only onefirebase client is created.
 docker_service = None
 gpu_manager = None
 session_manager = None
+
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
@@ -27,11 +32,16 @@ async def lifespan(app:FastAPI):
 
     #Core initialization of Services
 
+    print("initalized system metrics")
+    
+    print('redis swallowed the sytem metrics')
+
     gpu_manager= GPUManager(redis_manager) #gpumanager consumes this redis client for his own purpose
     print("GPU Manager initialized")
 
     session_manager = SessionManager(redis_manager, firebase_service, gpu_manager, None)
     print("Session Manager initialized")
+    print("System metrics init()")
 
 
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
@@ -48,6 +58,8 @@ async def lifespan(app:FastAPI):
     print("After linking:")
     print(f"DockerService session: {docker_service._session}")
     print(f"SessionManager docker: {session_manager._docker}")
+    await docker_service.start_resource_monitoring()
+    print("container resource monitoring  started")
 
 #this section tell entire app that any request can get it from here ...
     app.state.redis = redis_manager
@@ -56,6 +68,8 @@ async def lifespan(app:FastAPI):
     app.state.gpu = gpu_manager
     app.state.session_service = session_manager
     app.state.authorization_service = authorization_service
+    app.state.system_metrics = system_metrics
+
 
 
 
@@ -101,6 +115,8 @@ app.add_middleware(CORSMiddleware, **CORS_CONFIG)
 app.include_router(general.router)
 app.include_router(docker.router)
 app.include_router(authentication_router.router)
+
+
 
 
 if __name__ == "__main__":

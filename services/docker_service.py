@@ -139,7 +139,7 @@ class DockerService:
                 }                
             print(f"Checking GPU availability for {request.gpu_count} GPUs...")
             free_gpu_ids = await self.gpu_manager.check_gpu_availability(request.gpu_count) #call here the asiisgn_gpu, returns a list
-
+            resources = self.calculate_resource_limit(request.gpu_count, request.container_type)
             #here we have a bug, we are just getting the list and not checking the failure status
             
             if isinstance(free_gpu_ids, dict):
@@ -167,6 +167,8 @@ class DockerService:
                 command=config["command"],
                 labels=labels,
                 network="traefik-net",
+                mem_limit=f"{resources['ram_gb']}g", #do not userr mem_reservation it hard codes the RAM allocation
+                cpu_count=resources['cpu_count'],
                 device_requests=[
                     {
                         "Driver":"nvidia",
@@ -496,11 +498,105 @@ class DockerService:
                 "status":"error",
                 "message":str(e)
             }
+    def calculate_resource_limit(self, gpu_count:int, container_type:str):
+        base_resources = {
+            "ram_per_gpu":16,
+            "cpu_per_gpu":3,
+            "storage_per_gpu":100
+        }
 
+        type_multipliers={
+            "jupyter":{"ram":1.0, "cpu":1.0},
+            "pytorch":{"ram":1.2, "cpu":1.0},
+            "tensorflow":{"ram":1.2, "cpu":1.1}
+        }
 
-                        
+        multiplier= type_multipliers.get(container_type, {"ram": 1.0, "cpu": 1.0})
 
+        return{
+            "ram_gb":int(base_resources["ram_per_gpu"]*gpu_count*multiplier["ram"]),
+            "cpu_count":int(base_resources["cpu_per_gpu"]*gpu_count*multiplier["cpu"]),
+            "storage_gb":int(base_resources["storage_per_gpu"]*gpu_count)
+        }
+    async def monitor_container_resources(self):
+        """For user and especailly admin"""
+        # please don't ask me what and how I calculated I just copy pasted from someone eles's code
+        container_stats =[]
+        try:
+            containers = self.client.containers.list()
+            for container in containers:
+                try:
+                    stats =container.stats(stream=False)
 
+                    info = container.attrs
+
+                    mem_limit = info['HostConfig'].get('Memory', 0) / (1024**3)  # Convert to GB
+                    cpu_count = info['HostConfig'].get('CpuCount', 0)
+                
+                # Extract current usage
+                    mem_usage = stats['memory_stats'].get('usage', 0) / (1024**3)  # Convert to GB
+                
+                # CPU usage is more complex as it's a percentage
+                    cpu_delta = stats['cpu_stats']['cpu_usage']['total_usage'] - \
+                           stats['precpu_stats']['cpu_usage']['total_usage']
+                    system_delta = stats['cpu_stats']['system_cpu_usage'] - \
+                              stats['precpu_stats']['system_cpu_usage']
+                    
+                    if system_delta >0:
+                        cpu_usage = (cpu_delta/system_delta)*100.0
+                    else:
+                        cpu_usage = 0
+
+                    container_stats.append({
+                    'container_id': container.id,
+                    'name': container.name,
+                    'memory_usage_gb': round(mem_usage, 2),
+                    'memory_limit_gb': round(mem_limit, 2),
+                    'memory_percent': round((mem_usage / mem_limit * 100) if mem_limit > 0 else 0, 2),
+                    'cpu_usage_percent': round(cpu_usage, 2),
+                    'cpu_count': cpu_count
+                })
+                    if mem_usage > 0.85 * mem_limit and mem_limit > 0:
+
+                        print(f"WARNING: Container {container.id} is using {round(mem_usage, 2)}GB of {round(mem_limit, 2)}GB RAM ({round(mem_usage/mem_limit*100, 2)}%)")
+                        #here I need to send a warning to the admin or the user
+                except Exception as e:
+                    print(f"Error getting stats for container {container.id}: {str(e)}")
+                    continue   
+            return container_stats  
+        except Exception as e:
+            print(f"Error monitoring containers: {str(e)}")
+            return []      
+
+    async def start_resource_monitoring(self):
+        """just a background task to start periodically"""
+        import asyncio
+
+        async def monitor_loop():
+            while True:
+                try:
+                    stats = await self.monitor_container_resources()
+                    totat_mem_percent = 0
+                    total_cpu_percent = 0
+
+                    if stats:
+                        total_containers = len(stats)
+                        for stat in stats:
+                            totat_mem_percent += stat['memory_percent']
+                            total_cpu_percent += stat['cpu_usage_percent']
+                        avg_mem_percent  = totat_mem_percent / total_containers
+                        avg_cpu_percent = total_cpu_percent/total_containers
+
+                        print(f"Resource monitor: {total_containers} containers running")
+                        print(f"Average memory usage: {avg_mem_percent:.2f}%, Average CPU usage: {avg_cpu_percent:.2f}%")
+                    await asyncio.sleep(300)
+                except Exception as e:
+                    print(f"error in monitoring loop {str(e)}")
+                    await asyncio.sleep(60) #retry on error
+                    
+        asyncio.create_task(monitor_loop())
+
+        
                     
 
 
