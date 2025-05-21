@@ -36,12 +36,18 @@ async def get_user_containers(user_id: str,request:Request):
 
 @router.post('/environment/create')
 async def creation_of_environment(request:Request,container_request: ContainerRequest,  background_tasks: BackgroundTasks ): #remember the subdomain we are creating it ourselves, 
+    user_id = request.state.user_id #get the user_id from the middleware
+
+    container_request.user_id = user_id #overwrite it 
+
     docker_service = request.app.state.docker
+    
     # session_manager = request.app.state.session
     return await docker_service.create_user_environment(container_request, background_tasks)
-@router.post('sessions/{container_id}/status')
+@router.get('/sessions/{container_id}/status')
 async def get_container_session_status(container_id:str, request:Request):
     session_manager = request.app.state.session_service
+    print(f"Handler triggered for container_id: {container_id}")
     return await session_manager.get_session_status(container_id)
 
 
@@ -61,7 +67,7 @@ async def require_container_access(container_id:str, user_id:str, auth_service: 
 
     
 
-@router.post('/stop_container/{container_id}/{user_id}')
+@router.post('/stop_container/{container_id}/{user_id}') #be careful using this, its kill the container
 async def cleanup_container(request:Request, container_id:str, user_id:str, _: bool = Depends(require_container_access)):
     docker_service = request.app.state.docker
     return await docker_service.cleanup_container(container_id, user_id)

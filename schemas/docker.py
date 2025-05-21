@@ -12,11 +12,12 @@ class ContainerResponse(BaseModel):
     message:Optional[str]=None
 
 class ContainerRequest(BaseModel):
-    user_id:str
+    user_id:Optional[str] = None #I made this optional since the middle ware will alawys provide it.
     container_type:str
     subdomain:str     #this subdomina we are creating ourselves, need to be created by us
     gpu_count: int=1
-    duration: int=1 #needs changing
+    duration: int=1 #needs changing int=1
+   
 
     @field_validator("duration")
     @classmethod

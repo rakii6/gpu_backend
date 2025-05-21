@@ -1,11 +1,10 @@
 from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
-# from middleware.auth_middleware import verify_token
+from middleware.authenticate_middleware import verify_token
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-
-from api.routes import authentication_router, docker,general
+from api.routes import authentication_router, dashboard_router, docker,general
 from config.setting import CORS_CONFIG
 from services.gpu_manager import GPUManager
 from services.redis import RedisManager
@@ -15,6 +14,7 @@ from security.rate_limiter import RateLimiter
 from services.session_manager import SessionManager
 from security.authorization_service import AuthorizationService
 from services.system_metrics import System_Metrics
+from services.user_profile import UserProfileService
 
 
 system_metrics = System_Metrics()
@@ -24,6 +24,7 @@ firebase_service = FirebaseService() #only onefirebase client is created.
 docker_service = None
 gpu_manager = None
 session_manager = None
+user_profile = None
 
 
 @asynccontextmanager
@@ -47,6 +48,8 @@ async def lifespan(app:FastAPI):
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
     authorization_service = AuthorizationService(firebase_service)
     print("Docker Service initialized")
+    user_profile = UserProfileService(firebase_service.db)
+    print("USer profile if ready")
 
     print("Before linking:")
     print(f"DockerService session: {docker_service._session}")
@@ -69,6 +72,7 @@ async def lifespan(app:FastAPI):
     app.state.session_service = session_manager
     app.state.authorization_service = authorization_service
     app.state.system_metrics = system_metrics
+    app.state.user_profile = user_profile
 
 
 
@@ -109,12 +113,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 app = FastAPI(lifespan=lifespan)
 rate_limiter = RateLimiter(redis_manager)
+app.middleware("http")(verify_token)
 app.add_middleware(RateLimitMiddleware, rate_limiter=rate_limiter)
 app.add_middleware(CORSMiddleware, **CORS_CONFIG)
-# app.middleware("http")(verify_token)
 app.include_router(general.router)
 app.include_router(docker.router)
 app.include_router(authentication_router.router)
+app.include_router(dashboard_router.router)
 
 
 

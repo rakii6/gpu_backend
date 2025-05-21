@@ -18,6 +18,7 @@ class RedisManager:
 
     is_connected =False
     redis_client =None
+    database_connections = {}
 
     def __init__(self, system_metrics :System_Metrics ):
         if not RedisManager.is_connected:
@@ -29,7 +30,7 @@ class RedisManager:
                 port=6379,
                 password=redis_love
                 )
-
+                RedisManager.database_connections[0]=RedisManager.redis_client #storage of db conncetion, the 0 db
                 RedisManager.redis_client.config_set('notify-keyspace-events', 'Ex')
                 print("Key space notification enabled")
 
@@ -53,6 +54,10 @@ class RedisManager:
                 print("starting detections ...........")
 
                 time.sleep(1)
+                system_data = self.system_metrics.send_stats()
+                print(f"System data received: {type(system_data)}")
+                print(f"System data keys: {system_data.keys() if isinstance(system_data, dict) else 'Not a dict'}")
+
 
                 import subprocess
                 try:
@@ -97,8 +102,10 @@ class RedisManager:
                             if not gpu_detail:
                                 print(f"Warning: No matching system metric data for GPU {i}")
                                 continue
-
+                            print(f"setting gpu status for {i}")
                             gpu_status ={
+                                "index":gpu.id,
+                                "id":gpu.uuid,
                                 "cuda_cores":gpu_detail["performance"]["cuda_cores_count"],
                                 "tflops_fp32":gpu_detail["performance"]["tflops_fp32"],
                                 "clock_speed_mhz":gpu_detail["performance"]["clock_speed_mhz"],
@@ -131,9 +138,9 @@ class RedisManager:
 
                         
 
-                
                 print(f"Stored {stored_count} out of {len(GPUS)} GPUs")
-           
+                return True
+
             except Exception as e:
                 print(f"Error in redis_overlord: {str(e)}")
               
@@ -151,8 +158,23 @@ class RedisManager:
         return status_update_thread
         # return task
                 
-
-
+    def get_database(self, index):
+        if index<0 or index >15:
+            raise ValueError("redis has pre made databases from 0 to 15")
+        # Use lock to prevent race conditions       
+        with self.gpu_lock:
+            if index in RedisManager.database_connections:
+                return RedisManager.database_connections[index]
+        new_connection = redis.Redis(
+                host='localhost',
+                port=6379,
+                password=redis_love,
+                db=index
+            )
+        new_connection.config_set('notify-keyspace-events', 'Ex') #remember if you are using keyspace event point them to right  db in any process,
+        #please remember that in the pubsub the keyevent must be pointing to the correct db number
+        RedisManager.database_connections[index]=new_connection
+        return new_connection
 
     async def test_connection(self):
         try:

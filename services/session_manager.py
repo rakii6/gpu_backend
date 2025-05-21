@@ -10,8 +10,8 @@ import asyncio
 class SessionManager:
 
     def __init__(self, redis_manager:RedisManager, firebase_service:FirebaseService, gpu_manager: GPUManager, docker_service: Optional[DockerService] = None ):
-        
         self.redis = redis_manager.redis
+        self.session_db = redis_manager.get_database(1)
         self.firebase = firebase_service
         self.gpu_manager = gpu_manager
         self._docker = docker_service
@@ -41,9 +41,9 @@ class SessionManager:
                 Return session details"""
         # self.pubsub.subscribe('__keyevent@0__:expired')
         try:
-                session_key = f"session:{user_id}:{container_id}" #this is important
+                session_key = f"session:{container_id}" #this is important
 
-                if self.redis.exists(session_key):
+                if self.session_db.exists(session_key):
                     return{
                         "status":"error",
                         "message":"session  already exsists for this container"
@@ -58,15 +58,16 @@ class SessionManager:
                 session_data = {
                     "container_id":container_id,
                     "payment_status": "paid" if payment_status else "unpaid", #this is important
-                    # "user_id":user_id,
+                    "user_id":user_id,
                     "start_time":current_time.isoformat(),
                     "end_time":end_time.isoformat(),
                     "duration_hours":str(duration_hours),
                     "status":"active"
                 }
                 print("session data created from session method")
-                self.redis.hset(session_key, mapping=session_data)
-                self.redis.expire(session_key, duration_hours*3600) #pubsub key event notification, #remeber to change
+                self.session_db.hset(session_key, mapping=session_data)
+                
+                self.session_db.expire(session_key, int(duration_hours*3600)) #pubsub key event notification, #remeber to change
               
 
 
@@ -81,8 +82,8 @@ class SessionManager:
                 "start_time": current_time.isoformat(),
                 "end_time": end_time.isoformat(),
                 "duration_hours": duration_hours,
-                "remaining_time": duration_hours * 3600
-                }}
+                "remaining_time": duration_hours * 3600}
+                }
         
         except Exception as e:
                 return{
@@ -90,53 +91,101 @@ class SessionManager:
                     "message":f"Failed to start session {str(e)}"
                 }
           
+    # async def get_session_status(self, container_id: str) -> Dict:
+    #     """Get remaining time and status for a container session"""
+    #     try:
+    #         session_key = None
+    #         for key in self.session_db.scan_iter(f"session:{container_id}"):
+    #             print("seesion keys found")
+    #             session_key = key.decode('utf-8')
+    #             break
+    #         if not session_key:
+    #              return{
+    #                   "status":"error",
+    #                   "message": f"No active session for the container ID with{container_id}"
+    #              }
+    #         session_data = self.session_db.hgetall(session_key)
+    #         session_data = {k.decode():v.decode() for  k,v in session_data}
+
+    #         end_time = datetime.fromisoformat(session_data['end_time'])
+    #         ist = pytz.timezone('Asia/Kolkata')
+    #         current_time = datetime.now(ist)
+    #         time_remaining = (end_time - current_time).total_seconds()
+    #         session_status = "active" if time_remaining > 0 else "expired"             
+    #         return {
+    #         "status": "success",
+    #         "session_info": {
+    #             "container_id": container_id,
+    #             # "user_id": session_data['user_id'],
+    #             "start_time": session_data['start_time'],
+    #             "end_time": end_time,
+    #             "duration_hours": session_data['duration_hours'],
+    #             "status": session_status
+    #         },
+    #         "time_remaining_seconds": max(0, time_remaining),
+    #         "time_remaining_hours": max(0, time_remaining / 3600)
+    #         }
+        
+    #     except Exception as e:
+    #          return{
+    #               "status":"error",
+    #               "message":f"Error getting session status: {str(e)}"
+    #          }
+
+    
     async def get_session_status(self, container_id: str) -> Dict:
-        """Get remaining time and status for a container session"""
+        """get remaining time and all idc"""
+         
         try:
-            session_key = None
-            for key in self.redis.scan_iter(f"session:*:{container_id}"):
-                session_key = key.decode('utf-8')
-                break
-            if not session_key:
-                 return{
-                      "status":"error",
-                      "message": f"No active session for the container ID with{container_id}"
-                 }
-            parts = session_key.split(':')
-            user_id = parts[1]
-
-            session_data = self.redis.hgetall(session_key)
-            session_data = {k.decode():v.decode() for  k,v in session_data}
-
-            end_time = datetime.fromisoformat(session_data['end_time'])
+            print(f"Looking for container ID: {container_id}")
+            
+            # Using the simplified key pattern
+            session_key = f"session:{container_id}"
+            
+            # Check if this session exists
+            if not self.session_db.exists(session_key):
+                return {
+                    "status": "error",
+                    "message": f"No active session for container ID: {container_id}"
+                }
+            
+            # Get all session data
+            session_data = self.session_db.hgetall(session_key)
+            if not session_data:
+                return {
+                    "status": "error",
+                    "message": f"Session exists but has no data"
+                }
+                
+            session_data = {k.decode(): v.decode() for k, v in session_data.items()}
+            
+            # Calculate remaining time
+            end_time = datetime.fromisoformat(session_data['end_time']) 
             ist = pytz.timezone('Asia/Kolkata')
             current_time = datetime.now(ist)
             time_remaining = (end_time - current_time).total_seconds()
-            session_status = "active" if time_remaining > 0 else "expired"            
-
-        
-                
-            
+            session_status = "active" if time_remaining > 0 else "expired"
             
             return {
-            "status": "success",
-            "session_info": {
-                "container_id": container_id,
-                "user_id": user_id,
-                "start_time": session_data['start_time'],
-                "end_time": end_time,
-                "duration_hours": session_data['duration_hours'],
-                "status": session_status
-            },
-            "time_remaining_seconds": max(0, time_remaining),
-            "time_remaining_hours": max(0, time_remaining / 3600)
+                "status": "success",
+                "session_info": {
+                    "container_id": container_id,
+                    "start_time": session_data['start_time'],
+                    "end_time": session_data['end_time'],
+                    "duration_hours": session_data['duration_hours'],
+                    "status": session_status
+                },
+                "time_remaining_seconds": max(0, time_remaining),
+                "time_remaining_hours": max(0, time_remaining / 3600)
             }
         
         except Exception as e:
-             return{
-                  "status":"error",
-                  "message":f"Error getting session status: {str(e)}"
-             }
+            print(f"Error in get_session_status: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error getting session status: {str(e)}"
+            }
+
 
 
     async def check_container_payment(self, container_id) -> Dict:
@@ -174,8 +223,8 @@ class SessionManager:
         """Background task to monitor active sessions and cleanup expired ones"""
 
         try:
-             for session_key in self.redis.scan_iter("session:*"): #here we scan  the entire the list of keys startring  with "session:" using for loop
-                  session_data = self.redis.hgetall(session_key)
+             for session_key in self.session_db.scan_iter("session:*"): #here we scan  the entire the list of keys startring  with "session:" using for loop
+                  session_data = self.session_db.hgetall(session_key)
 
                   if session_data:
                        session_data = {k.decode():v.decode() for k,v in session_data.items()}
@@ -196,7 +245,7 @@ class SessionManager:
                                  "expired"
                             )
 
-                            self.redis.delete(session_key)
+                            self.session_db.delete(session_key)
         except Exception as e:
              return{
                   "status":"error",
@@ -209,7 +258,7 @@ class SessionManager:
 
         pass
 
-    async def cleanup_expired_session(self, container_id: str, user_id:str) -> Dict:
+    async def cleanup_expired_session(self, container_id: str) -> Dict:
         """ Clean up an expired session and its resources
     
     Steps:
@@ -219,12 +268,12 @@ class SessionManager:
     4. Update status in Firebase
     5. Clean up Redis entries"""
         try:
-            session_key = f"session:{user_id}:{container_id}"
+            session_key = f"session:{container_id}"
             print("session key is collected")
-            if self.redis.exists(session_key):
+            if self.session_db.exists(session_key):
                  print(f"session is key being deleted")
-                 self.redis.delete(session_key)
-                 print("session key  deleted")
+                 self.session_db.delete(session_key)
+                 print(f"session key  deleted{session_key}")
                  return{
                  "status": "success",
                 "message": "Session cleanup completed",
@@ -247,7 +296,7 @@ class SessionManager:
           """Background task to listen for Redis key expiration events 
           and then stop the docker container by  calling a method"""
 
-          self.pubsub.subscribe('__keyevent@0__:expired')
+          self.pubsub.subscribe('__keyevent@1__:expired')#please remember that in the pubsub the keyevent must be pointing to the correct db number
           try:
                while True:
                     message = self.pubsub.get_message(timeout=1.0)
@@ -255,12 +304,11 @@ class SessionManager:
                          expired_key = message['data'].decode('utf-8')
                          if expired_key.startswith('session:'):
                               parts = expired_key.split(':')#classic split technique and gettin continaer id
-                              if len(parts) == 3:
-                                   user_id=parts[1]
-                                   container_id= parts[2]
-                                   print(f"Session expired for container {container_id}, user {user_id}")
+                              if len(parts) == 2:
+                                   container_id= parts[1]
+                                   print(f"Session expired for container {container_id}")
                                    if self.docker:
-                                        await self._docker.cleanup_container(container_id, user_id)
+                                        await self._docker.cleanup_container(container_id)
                                    else:
                                         print("ERROR: Docker service not available!")
                                         

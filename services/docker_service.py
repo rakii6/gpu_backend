@@ -54,8 +54,9 @@ class DockerService:
         self.firebase = firebase_service
         self.client = DockerService.docker_client       
         self.gpu_manager = gpu_manager
-        self.redis = self.gpu_manager.redis
+        # self.redis = self.gpu_manager.redis
         self.redis_manager = redis_manager
+        self.session_db = redis_manager.get_database(1)
         self._session = session_manager
         self.container_store = {}
 
@@ -218,11 +219,13 @@ class DockerService:
                 "user_id": request.user_id,
                 "container_id": container.id,
                 "subdomain": request.subdomain,
+                "gpu_count":len(free_gpu_ids),
                 "gpu_ids":free_gpu_ids,
                 "type": request.container_type,
                 "created_at":dt.datetime,
                 "expires_at":expired_time.datetime,
-                "gpu_count":len(free_gpu_ids)}
+                "status":container.status
+                }
                 print("contianer mapped")
                 
 
@@ -230,7 +233,7 @@ class DockerService:
                     user_id=request.user_id,
                     container_id = container.id,
                     duration_hours=request.duration, #needs changeing
-                    payment_status=True
+                    payment_status=True,
                 )
                 print("session result achecived")
                 await self.firebase.store_container_info(container.id, container_data)# Store in Firebase
@@ -305,7 +308,7 @@ class DockerService:
 
     async def cleanup_container(self,container_id: str, user_id:str)->Dict:
         try:
-            print(f"CLEANUP: Starting cleanup for container {container_id}, user {user_id}")
+            print(f"CLEANUP: Starting cleanup for container {container_id}, ")
             gpu_ids = []
             try:
                 print(f"CLEANUP: Getting container from Docker API")
@@ -341,9 +344,9 @@ class DockerService:
                 ist_time = datetime.now(ist)
 
             try:
-                await self.firebase.update_container_status( container_id, "terminated", {"termination_time(ist)":ist_time})
+                await self.firebase.update_container_status( container_id, "terminated", user_id)
                 print("about to hit the cleanup session")
-                result = await self._session.cleanup_expired_session(container_id, user_id)
+                result = await self._session.cleanup_expired_session(container_id)
 
                 return {
                 "status": "success",
@@ -370,6 +373,8 @@ class DockerService:
     async def pause_container(self,container_id:str, user_id:str):
 
         try:
+            ist = pytz.timezone('Asia/Kolkata')
+            current_time = datetime.now(ist)
 
             try:
                 container_to_pause = self.docker_client.containers.get(container_id)
@@ -402,12 +407,12 @@ class DockerService:
                 
             
             try: 
-                for gpu_key in self.redis.scan_iter("gpu:*"):
-                    gpu_data = self.redis.hgetall(gpu_key)
-                    print(f"Checking GPU: {gpu_key}")
+                for session_key in self.session_db.scan_iter("session:*"):
+                    session_data = self.session_db.hgetall(session_key)
+                    print(f"Checking GPU: {session_key}")
 
-                    if gpu_data:
-                        container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
+                    if session_data:
+                        container_id_value = session_data.get(b'container_id',b'').decode('utf-8')
                         print(f"Stored container ID: {container_id_value}")
                         if container_id_value == container_id:
 
@@ -415,13 +420,14 @@ class DockerService:
                             "status":"paused",
                             "container_id": container_id,
                             "user_id": user_id,
-                            "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
+                            "allocated_at": session_data.get(b'allocated_at', b'').decode('utf-8'),
+                            "paused_at":current_time.isoformat()
                         }
-                            self.redis.hset(gpu_key,  mapping = new_state)
-                            print(f"Updated state for GPU {gpu_key}") 
+                            self.session_db.hset(session_key,  mapping = new_state)
+                            print(f"Updated state for GPU {session_key}") 
                         
 
-                await self.firebase.update_container_status(container_id, "paused")
+                await self.firebase.update_container_status(container_id, "paused", user_id)
                 return {
                 "status": "success",
                 "message": f"Container {container_id} paused successfully"
@@ -470,19 +476,19 @@ class DockerService:
                 }
             
             try:
-                for gpu_key in self.redis.scan_iter("gpu:*"):
-                    gpu_data = self.redis.hgetall(gpu_key)
-                    if gpu_data:
-                        container_id_value = gpu_data.get(b'container_id',b'').decode('utf-8')
+                for session_key in self.session_db.scan_iter("gpu:*"):
+                    session_data = self.session_db.hgetall(session_key)
+                    if session_data:
+                        container_id_value = session_data.get(b'container_id',b'').decode('utf-8')
                         if container_id_value == container_id:
                             new_state={
                                 "status":"in_use",
                                 "container_id": container_id,
                                 "user_id": user_id,
-                                "allocated_at": gpu_data.get(b'allocated_at', b'').decode('utf-8')
+                                "allocated_at": session_data.get(b'allocated_at', b'').decode('utf-8')
                                 }
-                            self.redis.hset(gpu_key, mapping=new_state)
-                await self.firebase.update_container_status(container_id, "active") 
+                            self.session_db.hset(session_key, mapping=new_state)
+                await self.firebase.update_container_status(container_id, "active", user_id) 
 
                 return{
                     "status": "success",

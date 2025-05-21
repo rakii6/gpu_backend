@@ -3,6 +3,7 @@ from typing import List, Dict
 from threading import Lock
 from services.redis import RedisManager
 from datetime import datetime
+import json
 class GPUManager:
 
     is_initialized = False
@@ -21,6 +22,8 @@ class GPUManager:
             GPUManager.shared_lock = Lock()
             GPUManager.is_initialized = True
             print("GPU Manager initialized")
+        
+        self.redis_manager= redis_manager
         self.redis = redis_manager.redis
         self.gpu_lock = GPUManager.shared_lock
 
@@ -37,12 +40,29 @@ class GPUManager:
             print(f"Warning: Attempting to set state for unknown GPU: {gpu_uuid}")
             return {}
         
+        # key = f"gpu:{gpu_uuid}" #remember I am doing this for safety net, to get a complete new clean state when updating gpu state
+        # self.redis.delete(key)
+        print(f"Redis connection info: {self.redis}")
+        print(f"Redis connection ID: {id(self.redis)}")
         key = f"gpu:{gpu_uuid}"
-        self.redis.delete(key)
+        print(f"Updating state for gpu:{gpu_uuid}")
+        print(f"State to update: {state}")
 
-        if state:
-            self.redis.hset(key, mapping=state)
-        print(f"just set the new state for {key}")
+        try:
+            if state:
+                set_result=self.redis.hset(key, mapping=state)
+                print(f"hset result: {set_result} fields updated")
+
+                # self.redis.save()
+                self.redis.bgsave()
+                print("Forced Redis background save")
+
+                verify = self.redis.hgetall(key)
+                print(f"Verification - updated data: {verify}")
+        except Exception as e:
+            print(f"Redis operation error: {str(e)}")
+            return {}
+        print(f"Successfully updated state for {key}")
         return state
 
 
@@ -102,6 +122,8 @@ class GPUManager:
 
 
     async def release_gpu(self, gpu_uuid:str):
+        
+
         with self.gpu_lock:
              new_state = {
             'status': 'available',
@@ -126,6 +148,42 @@ class GPUManager:
             if state.get('container_id') == container_id:
                 container_gpus.append(gpu.uuid)
         return container_gpus
+
+    def get_public_gpu_stats(self):
+        check= self.redis_manager.redis_overlord()
+        if not check:
+            print("redis not ready")
+            return[] 
+        private_fields = ['user_id', 'container_id', 'allocated_at']
+
+        public_gpus=[]
+
+        all_keys = self.redis.scan_iter("gpu:*")
+
+        for key in all_keys:
+
+            if isinstance(key, bytes):
+                gpu_key = key.decode('utf-8')
+            else:
+                gpu_key = key
+
+            gpu_data=self.redis.hgetall(gpu_key)
+
+            if not gpu_data:
+                continue
+            filtered_gpu={}
+
+            for field, value in gpu_data.items():
+                if isinstance(field, bytes):
+                    field=field.decode('utf-8')
+                if isinstance(value, bytes):
+                    value=value.decode('utf-8')
+                if field not in private_fields:
+                    filtered_gpu[field]=value
+            public_gpus.append(filtered_gpu)
+        self.redis.set("gpu:public",json.dumps(public_gpus))
+        print("saved public gpu keys, please check")
+        return public_gpus
 
 # Clean Error Recovery method()
 # What happens if a GPU becomes unavailable mid-check?

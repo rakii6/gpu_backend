@@ -34,34 +34,41 @@ class AuthorizationService:
         """Check if user can access a specific container"""
         try:
             print(f"Checking authorization for user_id: {user_id}, container_id: {container_id}")
-            user_doc = self.db.collection('users').document(user_id).get()
+            container_doc = self.db.collection('users').document(user_id).collection('containers').document(container_id).get()
 
-            if not user_doc.exists:
-                print(f"User {user_id} not found in Firebase")
+            if not container_doc.exists:
+                print(f"container with {container_id} ID not found in Firebase")
                 return False
                 
-            user_data = user_doc.to_dict()
-            print(f"User data: {user_data.keys()}")
+            container_data = container_doc.to_dict()
+            print(f"User data: {container_data.keys()}")
             
-            if 'containers' not in user_data:
-                print(f"No 'containers' field found for user {user_id}")
+            if 'user_id' not in container_data:
+                print(f"No containers associated with this {user_id} is in the Record.")
+                return False
+            elif container_data.get('status') == 'terminated':
+                print(f"Container {container_id} is terminated and cannot be accessed")
                 return False
 
-            containers = user_data['containers']
-            print(f"Found {len(containers)} containers for user")
+            required_user = container_data['user_id']
+            print(f"Found the require {required_user}")
             
-            if not isinstance(containers, list):
-                print("Container is not a list for the user")
-                return False
+            # if not isinstance(required_user, list):
+            #     print("Container is not a list for the user")
+            #     return False
 
-            for i, container in enumerate(containers):
-                print(f"Checking container {i}: {container.get('container_id')}")
-                if container.get('container_id') == container_id:
-                    print(f"Found matching container: {container_id}")
-                    return True
+            # for i, container in enumerate(containers):
+            #     print(f"Checking container {i}: {container.get('container_id')}")
+            #     if container.get('container_id') == container_id:
+            #         print(f"Found matching container: {container_id}")
+            #         return True
+            if required_user == user_id:
+                return True
+            else:
+                print(f"No matching container found for {container_id}")
+                return False
                     
-            print(f"No matching container found for {container_id}")
-            return False
+           
         except Exception as e:
             print(f"Error from the IDOR check: {str(e)}")
             import traceback

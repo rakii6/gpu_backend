@@ -120,30 +120,15 @@ class System_Metrics:
             except NVMLError as error:
                 return {"error": str(error)}
             
-            try:
-                st = speedtest.Speedtest()
-                download_speed =  st.download() / 1_000_000
-                upload_speed =  st.upload() / 1_000_000
-                st.get_servers([])
-                ping_result =  st.results.ping
-
-                net_stats={
-                    "download_speed": f"{download_speed:.2f} Mbps",
-                    "upload_speed":f"{upload_speed:.2f}Mbps",
-                    "ping":ping_result
-                }
-
-                return {
+           
+            return {
                     "gpu_count": deviceCount,
                     # "driver_version": Version.decode('utf-8') if isinstance(Version, bytes) else Version,
                     # "net_stats":net_stats,
                     "gpu_details": GPU_devices
                 }
-            except Exception as e:
-                
-                return{
-                    "error":str(e)
-                }               
+            
+                       
 
         except Exception as e:
             return{

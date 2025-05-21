@@ -45,9 +45,13 @@ class FirebaseService:
             
 
 
-
-            container_ref = self.db.collection('containers').document(container_id)
-            container_ref.set(container_data)
+            user_id = container_data['user_id']
+            container_ref = self.db.collection('users').document(user_id)
+            container_ref.collection('containers').document(container_id).set(container_data)
+            info_doc_ref = container_ref.collection('containers').document('_info')
+            info_doc_ref.update({ 
+            "total_count":firestore.Increment(1)
+            })
             return{
                 "status":'success',
                 "message":"Container created Successfully",
@@ -69,12 +73,14 @@ class FirebaseService:
         return [doc.to_dict() for doc in docs]
 
 
-    async def update_container_status(self, container_id:str, status:str, additional_data:Optional[Dict[str, Any]]=None):
+    async def update_container_status(self, container_id:str, status:str, user_id:str):
 
         """Update container Status"""
         try:
-            container_ref = self.db.collection('containers').document(container_id)
+            print("looking for contianaer to pause")
+            container_ref = self.db.collection('users').document(user_id).collection('containers').document(container_id)
             container = container_ref.get()
+            print(f'continaer found {container}')
 
             if not container.exists:
                 return{
@@ -83,13 +89,14 @@ class FirebaseService:
                 }
             update_data = {
                 'status':status,
-                'last_active':arrow.utcnow()
+                'last_active':firestore.SERVER_TIMESTAMP
             }
-            if additional_data:
-                update_data.update(additional_data) #method to add another entry in dict
-                
+            # if additional_data:
+            #     update_data.update(additional_data) #method to add another entry in dict
+           
             container_ref.update(update_data)
-            
+            updated_doc = container_ref.get().to_dict()
+            print(f"Document in firebase after update: {updated_doc}")
             return{
                 'status':'success',
                 'message':f'container status updated to {container_id} id'
@@ -109,18 +116,19 @@ class FirebaseService:
 
         
         try:
-            containers = self.db.collection('containers').where('user_id','==', user_id).stream()
+            containers_ref = self.db.collection('users').document(user_id).collection('containers')
             # container_list = [{"id":doc.id, **doc.to_dict()} for doc in containers]
-            container_list = []
-            for doc in containers:
-                container_dict = {"id":doc.id}
-                container_dict.update(doc.to_dict())
-                container_list.append(container_dict)
+            all_containers = containers_ref.stream()
+            container_data = {}
+            for container in all_containers:
+                container_data[container.id]=container.to_dict()
+
+           
 
             return{
                 "status":"success",
-                "containers":container_list,
-                "count":len(container_list)
+                "data":container_data,
+                "count":len(container_data)
             }
         except Exception as e:
             return{
