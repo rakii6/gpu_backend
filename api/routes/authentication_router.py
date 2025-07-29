@@ -6,8 +6,12 @@ import firebase_admin.exceptions
 from pydantic import BaseModel, EmailStr, Field
 import firebase_admin
 from firebase_admin import auth, firestore
+from firebase_admin.auth import ActionCodeSettings
 from typing import Optional
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 load_dotenv()
 
 API_key = os.getenv("API_KEY")
@@ -166,23 +170,126 @@ async def login(request : LoginRequest, response:Response):
         raise HTTPException(status_code=401, detail="Invalid Credentials")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    
+
+class EmailService:
+    def __init__(self):
+        self.smtp_server = os.getenv("EMAIL_HOST")
+        self.smtp_port = int(os.getenv("EMAIL_PORT", 587))
+        self.email_user = os.getenv("EMAIL_USER")
+        self.email_password = os.getenv("EMAIL_PASSWORD")
+    
+    async def send_reset_gmail(self, to_email:str,  reset_link:str, user_name:str ="User"):
+
+        try:
+            message =MIMEMultipart("alternative")
+            message["Subject"]="Reset your IndieGPU password"
+            message["From"]= self.email_user
+            message["To"]=to_email
+            html_content = f"""
+            <html>
+                <body style="font-family: 'Montserrat', Arial, sans-serif; background: #110e20; color: #ffffff; padding: 20px;">
+                    <div style="max-width: 600px; margin: 0 auto; background: #1A142F; border-radius: 12px; padding: 30px;">
+                        <h1 style="color: #00E5FF; text-align: center; margin-bottom: 30px;">IndieGPU</h1>
+                        <h2 style="color: #FFF176;">Reset Your Password</h2>
+                        <p>Hi {user_name},</p>
+                        <p>You requested to reset your password. Click the button below to create a new password:</p>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{reset_link}" style="
+                                background: linear-gradient(45deg, #00E5FF, #FFF176);
+                                color: #110e20;
+                                padding: 15px 30px;
+                                text-decoration: none;
+                                border-radius: 8px;
+                                font-weight: 600;
+                                display: inline-block;
+                            ">Reset Password</a>
+                        </div>
+                        
+                        <p style="color: rgba(255, 255, 255, 0.8); font-size: 14px;">
+                            This link will expire in 1 hour for security reasons.
+                        </p>
+                        <p style="color: rgba(255, 255, 255, 0.8); font-size: 14px;">
+                            If you didn't request this, you can safely ignore this email.
+                        </p>
+                        
+                        <hr style="border: 1px solid #333; margin: 30px 0;">
+                        <p style="color: rgba(255, 255, 255, 0.6); font-size: 12px; text-align: center;">
+                            © 2025 IndieGPU - Unlock the Power of Cloud GPUs
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            message.attach(MIMEText(html_content,"html"))
+
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as mail_server:
+                mail_server.starttls()
+                mail_server.login(self.email_user, self.email_password)
+                mail_server.send_message(message) 
+            return{
+                "status":"success",
+                "message":"email sent successfully"
+            }
+        except Exception as e:
+            return{
+                "status":"error",
+                "message":f"Error sending password reset email {str(e)}"
+            }
+
+email_service = EmailService()
+
+
 @router.post("/reset-password", status_code=200)
 async def reset_password(request : ResetPasswordRequest, response: Response):
 
     try:
+        print(f"getting the  user request {request}")
         user =auth.get_user_by_email(request.email)
-        reset_link = auth.generate_password_reset_link(request.email)
+
+        print(f"here is the user authentcaiont of  the user {user}")
+
+        action_code_settings = ActionCodeSettings(
+            url='http://localhost:5173/reset-password',
+            handle_code_in_app=False
+        )
+
+
+        reset_link = auth.generate_password_reset_link(
+            request.email,
+                action_code_settings=action_code_settings)
+        # reset_link = auth.generate_password_reset_link(request.email)
         
-        return{
-            "status":f"reset email sent successfully to {request.email}"
+        print(f"request for reset link generated{reset_link}")
+        print(f"Sending reset email service")
+        email_result = await email_service.send_reset_gmail(
+            to_email = request.email,
+            reset_link=reset_link,
+            user_name=user.display_name or "User"
+        )
+        print(f"email service reset result, {email_result}")
+        if email_result["status"] == "success":
+            return{
+            "status":"success",
+            "message": f"Password reset instructions sent to {request.email}"
         }
+
         
-    except firebase_admin.exceptions.FirebaseError:
+    except firebase_admin.exceptions.FirebaseError as e:
+        import traceback
+        print("FirebaseError Traceback:")
+        print(traceback.format_exc())
+
         raise HTTPException(
             status_code=404,
             detail="User with this email does not exist"
         )
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback_str = traceback.format_exc()
+        print(traceback_str)
         raise HTTPException(
             status_code=500,
             detail="Something went wrong, try again later"

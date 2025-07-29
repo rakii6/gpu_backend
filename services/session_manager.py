@@ -15,7 +15,7 @@ class SessionManager:
         self.firebase = firebase_service
         self.gpu_manager = gpu_manager
         self._docker = docker_service
-        self.pubsub = self.redis.pubsub()
+        self.pubsub = self.session_db.pubsub()
 
         asyncio.create_task(self._start_expiry_listener())
         # print(f"Session Manager initialized with docker: {docker_service is not None}")
@@ -41,7 +41,7 @@ class SessionManager:
                 Return session details"""
         # self.pubsub.subscribe('__keyevent@0__:expired')
         try:
-                session_key = f"session:{container_id}" #this is important
+                session_key = f"session:{user_id}:{container_id}" #this is important
 
                 if self.session_db.exists(session_key):
                     return{
@@ -68,12 +68,7 @@ class SessionManager:
                 self.session_db.hset(session_key, mapping=session_data)
                 
                 self.session_db.expire(session_key, int(duration_hours*3600)) #pubsub key event notification, #remeber to change
-              
-
-
-               
-                
-
+        
                 return {
                 "status": "success",
                 "message": "Session started successfully",
@@ -133,14 +128,14 @@ class SessionManager:
     #          }
 
     
-    async def get_session_status(self, container_id: str) -> Dict:
+    async def get_session_status(self, container_id: str,user_id:str) -> Dict:
         """get remaining time and all idc"""
          
         try:
             print(f"Looking for container ID: {container_id}")
             
             # Using the simplified key pattern
-            session_key = f"session:{container_id}"
+            session_key = f"session:{user_id}:{container_id}"
             
             # Check if this session exists
             if not self.session_db.exists(session_key):
@@ -258,7 +253,7 @@ class SessionManager:
 
         pass
 
-    async def cleanup_expired_session(self, container_id: str) -> Dict:
+    async def cleanup_expired_session(self, container_id: str, user_id:str) -> Dict:
         """ Clean up an expired session and its resources
     
     Steps:
@@ -268,7 +263,7 @@ class SessionManager:
     4. Update status in Firebase
     5. Clean up Redis entries"""
         try:
-            session_key = f"session:{container_id}"
+            session_key = f"session:{user_id}:{container_id}"
             print("session key is collected")
             if self.session_db.exists(session_key):
                  print(f"session is key being deleted")
@@ -303,12 +298,19 @@ class SessionManager:
                     if message and message['type'] == 'message':
                          expired_key = message['data'].decode('utf-8')
                          if expired_key.startswith('session:'):
-                              parts = expired_key.split(':')#classic split technique and gettin continaer id
-                              if len(parts) == 2:
-                                   container_id= parts[1]
+                              parts = expired_key.split(':')#classic split technique and gettin continaer id [session, user_id, container_id]
+                              print(f"this here are the parts {parts}😒😒😒")
+                              if len(parts) == 3:
+                                   user_id= parts[1]
+                                   container_id = parts[2]
                                    print(f"Session expired for container {container_id}")
+                                   session_data = self.session_db.hgetall(f"session:{container_id}")
+                                   if session_data:
+                                    user_id = session_data.get(b'user_id', b'').decode('utf-8')
+                                    print(f"Session expired for container {container_id}, user {user_id}")
+                                   
                                    if self.docker:
-                                        await self._docker.cleanup_container(container_id)
+                                        await self._docker.cleanup_container(container_id, user_id)
                                    else:
                                         print("ERROR: Docker service not available!")
                                         

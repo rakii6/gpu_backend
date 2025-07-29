@@ -65,11 +65,10 @@ class FirebaseService:
 
 
       
-
-
+   
     async def get_user_container(self, user_id:str):
         """Get all containers for a user"""
-        docs = self.db.collection('containers').where('user__id','==',user_id).stream()
+        docs = self.db.collection('containers').where('user_id','==',user_id).stream()
         return [doc.to_dict() for doc in docs]
 
 
@@ -138,7 +137,6 @@ class FirebaseService:
 
 
 
-    # async def get_container_by_subdomain(self,subdomain):
         
 
 

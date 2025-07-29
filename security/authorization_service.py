@@ -32,23 +32,37 @@ class AuthorizationService:
 
     async def can_access_container(self, user_id: str, container_id: str) -> bool:
         """Check if user can access a specific container"""
+        
         try:
             print(f"Checking authorization for user_id: {user_id}, container_id: {container_id}")
             container_doc = self.db.collection('users').document(user_id).collection('containers').document(container_id).get()
 
             if not container_doc.exists:
-                print(f"container with {container_id} ID not found in Firebase")
-                return False
+                  return {
+                "allowed": False,
+                "reason": "container_not_found",
+                "message": f"Container {container_id} not found"
+            }
+             
+               
                 
             container_data = container_doc.to_dict()
             print(f"User data: {container_data.keys()}")
             
             if 'user_id' not in container_data:
                 print(f"No containers associated with this {user_id} is in the Record.")
-                return False
+                return {
+                    "allowed":False,
+                    "reason":"Invalid container data",
+                    "message":"Container is missing the user_id"
+                }
             elif container_data.get('status') == 'terminated':
                 print(f"Container {container_id} is terminated and cannot be accessed")
-                return False
+                return {
+                    "allowed":False,
+                    "reason":"container_terminated",
+                    "message":"Container has already been terminated, cannot be revived"
+                }
 
             required_user = container_data['user_id']
             print(f"Found the require {required_user}")
@@ -63,17 +77,25 @@ class AuthorizationService:
             #         print(f"Found matching container: {container_id}")
             #         return True
             if required_user == user_id:
-                return True
+                 return {
+                "allowed": True,
+                "reason": "authorized",
+                "message": "Access granted"
+            }
             else:
-                print(f"No matching container found for {container_id}")
-                return False
+                {
+                "allowed": False,
+                "reason": "user_mismatch", 
+                "message": f"Container belongs to different user"
+            }
                     
            
         except Exception as e:
-            print(f"Error from the IDOR check: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
+            return {                    
+            "allowed": False,
+            "reason": "authorization_error",
+            "message": f"Authorization check failed: {str(e)}"
+        }
         
 
         

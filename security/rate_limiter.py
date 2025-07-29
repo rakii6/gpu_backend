@@ -9,7 +9,7 @@ class RateLimiter:
     def __init__(self, redis_client:RedisManager):
         
         self.redis = redis_client.redis
-        self.default_rate_limit = 4 #for request
+        self.default_rate_limit = 10 #for request
         self.default_time_limit = 60 #window time
 
     async def check_rate_limit(self,
@@ -33,10 +33,10 @@ class RateLimiter:
                     "status":'error',
                     'message':f"Rate limit exceeded, please try again",
                     "limit":self.default_rate_limit,
-                    "window":f"{self.default_rate_limit} seconds"
+                    "window":f"{self.default_time_limit} seconds"
                 }
             )
         self.redis.incr(rate_limit_key)
-        self.redis.expire(rate_limit_key,self.default_rate_limit)
+        self.redis.expire(rate_limit_key,self.default_time_limit)
 
         return True

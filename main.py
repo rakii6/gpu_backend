@@ -15,7 +15,7 @@ from services.session_manager import SessionManager
 from security.authorization_service import AuthorizationService
 from services.system_metrics import System_Metrics
 from services.user_profile import UserProfileService
-
+from services.payment_manager import PaymentManager
 
 system_metrics = System_Metrics()
 
@@ -25,44 +25,48 @@ docker_service = None
 gpu_manager = None
 session_manager = None
 user_profile = None
+payment_manager = None
 
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
-    global docker_service, gpu_manager, session_manager
+    global docker_service, gpu_manager, session_manager, payment_manager
 
     #Core initialization of Services
 
-    print("initalized system metrics")
+    # print("initalized system metrics")
     
-    print('redis swallowed the sytem metrics')
+    # print('redis swallowed the sytem metrics')
 
     gpu_manager= GPUManager(redis_manager) #gpumanager consumes this redis client for his own purpose
-    print("GPU Manager initialized")
+    # print("GPU Manager initialized")
 
     session_manager = SessionManager(redis_manager, firebase_service, gpu_manager, None)
-    print("Session Manager initialized")
-    print("System metrics init()")
+    # print("Session Manager initialized")
+    # print("System metrics init()")
 
 
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
     authorization_service = AuthorizationService(firebase_service)
-    print("Docker Service initialized")
-    user_profile = UserProfileService(firebase_service.db)
-    print("USer profile if ready")
+    # print("Docker Service initialized")
+    payment_manager = PaymentManager(gpu_manager, firebase_service)
 
-    print("Before linking:")
-    print(f"DockerService session: {docker_service._session}")
-    print(f"SessionManager docker: {session_manager._docker}")
+
+    user_profile = UserProfileService(firebase_service.db)
+    # print("USer profile if ready")
+
+    # print("Before linking:")
+    # print(f"DockerService session: {docker_service._session}")
+    # print(f"SessionManager docker: {session_manager._docker}")
 
     #here again we pass dockeer service, after it has been inistialized
     docker_service.session = session_manager
     session_manager.docker = docker_service
-    print("After linking:")
-    print(f"DockerService session: {docker_service._session}")
-    print(f"SessionManager docker: {session_manager._docker}")
+    # print("After linking:")
+    # print(f"DockerService session: {docker_service._session}")
+    # print(f"SessionManager docker: {session_manager._docker}")
     await docker_service.start_resource_monitoring()
-    print("container resource monitoring  started")
+    # print("container resource monitoring  started")
 
 #this section tell entire app that any request can get it from here ...
     app.state.redis = redis_manager
@@ -71,8 +75,10 @@ async def lifespan(app:FastAPI):
     app.state.gpu = gpu_manager
     app.state.session_service = session_manager
     app.state.authorization_service = authorization_service
+    app.state.payment_manager = payment_manager
     app.state.system_metrics = system_metrics
     app.state.user_profile = user_profile
+
 
 
 
@@ -114,7 +120,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 app = FastAPI(lifespan=lifespan)
 rate_limiter = RateLimiter(redis_manager)
 app.middleware("http")(verify_token)
-app.add_middleware(RateLimitMiddleware, rate_limiter=rate_limiter)
+# app.add_middleware(RateLimitMiddleware, rate_limiter=rate_limiter)
 app.add_middleware(CORSMiddleware, **CORS_CONFIG)
 app.include_router(general.router)
 app.include_router(docker.router)

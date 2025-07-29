@@ -106,19 +106,19 @@ class RedisManager:
                             gpu_status ={
                                 "index":gpu.id,
                                 "id":gpu.uuid,
-                                "cuda_cores":gpu_detail["performance"]["cuda_cores_count"],
-                                "tflops_fp32":gpu_detail["performance"]["tflops_fp32"],
-                                "clock_speed_mhz":gpu_detail["performance"]["clock_speed_mhz"],
-                                "memory_clock_mhz":gpu_detail["performance"]["memory_clock_mhz"],
-                                "pcie_generation":gpu_detail["pcie"]["generation"],
-                                "pcie_lanes":gpu_detail["pcie"]["lanes"],
-                                "pcie_rx_mbs":gpu_detail["pcie"]["rx_mbs"],
-                                "pcie_tx_mbs":gpu_detail["pcie"]["tx_mbs"],
-                                "memoryFree": str(gpu.memoryFree),
-                                "memoryTotal": str(gpu.memoryTotal),
-                                "memoryUsed": str(gpu.memoryUsed),
-                                "bandwidth_gbs":gpu_detail["memory"]["bandwidth_gbs"],
-                                "bus_width_bit":gpu_detail["memory"]["bus_width_bit"],
+                                # "cuda_cores":gpu_detail["performance"]["cuda_cores_count"],
+                                # "tflops_fp32":gpu_detail["performance"]["tflops_fp32"],
+                                # "clock_speed_mhz":gpu_detail["performance"]["clock_speed_mhz"],
+                                # "memory_clock_mhz":gpu_detail["performance"]["memory_clock_mhz"],
+                                # "pcie_generation":gpu_detail["pcie"]["generation"],
+                                # "pcie_lanes":gpu_detail["pcie"]["lanes"],
+                                # "pcie_rx_mbs":gpu_detail["pcie"]["rx_mbs"],
+                                # "pcie_tx_mbs":gpu_detail["pcie"]["tx_mbs"],
+                                # "memoryFree": str(gpu.memoryFree),
+                                # "memoryTotal": str(gpu.memoryTotal),
+                                # "memoryUsed": str(gpu.memoryUsed),
+                                # "bandwidth_gbs":gpu_detail["memory"]["bandwidth_gbs"],
+                                # "bus_width_bit":gpu_detail["memory"]["bus_width_bit"],
                                 "status": "available" if gpu.memoryFree > 1000 else "in_use",
                                 "container_id": "",     # Empty string for no container
                                 "user_id": "",          # Empty string for no user
@@ -197,12 +197,12 @@ class RedisManager:
             }
    
 
-    async def mark_extracted_gpu(self, gpu_uid:str, container_id:str, user_id:str, ttl:int=3600): 
+    async def reserve_extracted_gpu(self, gpu_uid:str, container_id:str, user_id:str, ttl:int=3600): 
         """ttl needs to be as per user input, please remember""" 
         try:
             key = f"gpu:{gpu_uid}"
             data = {
-                'status':"in_use",
+                'status':"Reserved",
                 'allocated_at': datetime.now().isoformat(),
                 'docker_container_id':container_id,
                 'user_id':user_id,

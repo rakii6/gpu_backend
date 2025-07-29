@@ -2,8 +2,9 @@ import GPUtil
 from typing import List, Dict
 from threading import Lock
 from services.redis import RedisManager
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+from time import time
 class GPUManager:
 
     is_initialized = False
@@ -18,10 +19,10 @@ class GPUManager:
         """
 
         if not GPUManager.is_initialized:
-            print("initiazling gpu mangaer now")
+            # print("initiazling gpu mangaer now")
             GPUManager.shared_lock = Lock()
             GPUManager.is_initialized = True
-            print("GPU Manager initialized")
+            # print("GPU Manager initialized")
         
         self.redis_manager= redis_manager
         self.redis = redis_manager.redis
@@ -37,61 +38,162 @@ class GPUManager:
     async def _set_gpu_state(self, gpu_uuid: str, state:dict):
         all_gpus = GPUtil.getGPUs()
         if gpu_uuid not in [gpu.uuid for gpu in all_gpus]:
-            print(f"Warning: Attempting to set state for unknown GPU: {gpu_uuid}")
+            # print(f"Warning: Attempting to set state for unknown GPU: {gpu_uuid}")
             return {}
         
         # key = f"gpu:{gpu_uuid}" #remember I am doing this for safety net, to get a complete new clean state when updating gpu state
         # self.redis.delete(key)
-        print(f"Redis connection info: {self.redis}")
-        print(f"Redis connection ID: {id(self.redis)}")
+        # print(f"Redis connection info: {self.redis}")
+        # print(f"Redis connection ID: {id(self.redis)}")
         key = f"gpu:{gpu_uuid}"
-        print(f"Updating state for gpu:{gpu_uuid}")
-        print(f"State to update: {state}")
+        # print(f"Updating state for gpu:{gpu_uuid}")
+        # print(f"State to update: {state}")
 
         try:
             if state:
                 set_result=self.redis.hset(key, mapping=state)
-                print(f"hset result: {set_result} fields updated")
+                # print(f"hset result: {set_result} fields updated")
 
                 # self.redis.save()
                 self.redis.bgsave()
-                print("Forced Redis background save")
+                # print("Forced Redis background save")
 
                 verify = self.redis.hgetall(key)
-                print(f"Verification - updated data: {verify}")
+                # print(f"Verification - updated data: {verify}")
         except Exception as e:
-            print(f"Redis operation error: {str(e)}")
+            # print(f"Redis operation error: {str(e)}")
             return {}
-        print(f"Successfully updated state for {key}")
+        # print(f"Successfully updated state for {key}")
         return state
 
 
 
 
-    async def check_gpu_availability(self, requested_gpu:int):
+    async def check_gpu_availability(self, requested_gpu:int, user_id:str):
 
         with self.gpu_lock:
             all_gpus = GPUtil.getGPUs()
             
             available_gpus = []
+            reserverd_gpus = []
             used_gpus = []
-
+           
 
             for gpu in all_gpus:
                 state = await self._get_gpu_state(gpu.uuid)
 
-                if state.get('status')=='in_use':
+                if state.get('status') == 'payment_locked':
+                    expires_at_str = state.get('lock_expires')
+                    # expires_at = datetime.fromisoformat(state.get('lock_expires'))
+                    if expires_at_str:
+                        try:
+                            expires_at = datetime.fromisoformat(expires_at_str)
+                            if datetime.now() > expires_at:
+                                await self.unlock_gpus(user_id)
+                        except ValueError:
+                            await self.unlock_gpus(user_id)  
+
+
+
+                status = state.get('status')
+                locked_by = state.get('locked_by')
+                if status =="in_use":
                     used_gpus.append(gpu.uuid)
-                else:
+                elif status =="available":
                     available_gpus.append(gpu.uuid)
+                elif status =="payment_locked" and locked_by == user_id:
+                    reserverd_gpus.append(gpu.uuid)
 
-
-            if len(available_gpus) < requested_gpu:
+            if len(reserverd_gpus) < requested_gpu:
                 return{
                     "status":"error",
-                    "message":"Not enough GPUS are there for your needs,brother.Sorry."
+                    "message":"Not enough GPUS are there for your needs brother.Sorry."
                 }
-            return available_gpus[:requested_gpu]  #remember we are sending the sliced array
+            return reserverd_gpus
+
+
+
+
+
+
+            #now use asyncio wait 10 mins for calling the payment method of rzaor pay for confirmation,
+            # if not again set the state of the gpus status to = "" and clear requested_by  too
+            
+
+
+
+            # return available_gpus[:requested_gpu]  #remember we are sending the sliced array
+
+    async def lock_gpus_for_payment(self, user_id: str, gpu_count: int, ttl_minutes: int = 10):
+        print("lokcing gpus now")
+        with self.gpu_lock:
+            all_gpus = GPUtil.getGPUs()
+            available_gpus = []
+            locked_gpus = []
+            used_gpus = []
+
+            for gpu in all_gpus:
+                state = await self._get_gpu_state(gpu.uuid)
+                status = state.get('status')
+                print(f'these are statues oof the GPUS {status}')
+
+                if status =="in_use":
+                    used_gpus.append(gpu.uuid)
+                    print(f'')
+                elif status =="available":
+                    available_gpus.append(gpu.uuid)
+
+                elif status =="reserved":
+                    continue
+            
+            if len(available_gpus)<gpu_count:
+                return{
+                    "status":"error",
+                    "message":"sorry we cannot fullfill your order, as all machines are occupied"
+                }
+       
+            
+            gpus_to_lock = available_gpus[:gpu_count]
+
+            for gpu_uuid in gpus_to_lock:
+                current_state = await self._get_gpu_state(gpu_uuid)
+                lock_state = current_state.copy()
+                
+                lock_state.update({
+                'status': 'payment_locked',
+                'locked_by': user_id,
+                # 'transaction_id': transaction_id,
+                'locked_at': datetime.now().isoformat(),
+                'lock_expires': (datetime.now() + timedelta(minutes=ttl_minutes)).isoformat()
+                })
+                await self._set_gpu_state(gpu_uuid, lock_state)
+                locked_gpus.append(gpu_uuid)
+                print(f"these are the locked GPUs  {locked_gpus}")
+                print(f"Locked GPU {gpu_uuid} for transaction")
+
+
+        return {
+            "status": "success",
+            "locked_gpus": locked_gpus,
+            }
+    
+    async def unlock_gpus(self, user_id:str):
+        all_gpus = GPUtil.getGPUs()
+        unlocked_count = 0
+
+        for gpu in all_gpus:
+            state = await self._get_gpu_state(gpu.uuid)
+            if (state.get('locked_by')== user_id and state.get('status')=='payment_locked'):
+
+                for key in ['status', 'locked_by', 'transaction_id', 'locked_at', 'lock_expires']:
+                    state.pop(key,None)
+
+                state['status'] = 'available'
+                await self._set_gpu_state(gpu.uuid, state)
+                unlocked_count+=1
+        
+        return{f"unlocked Gpus {unlocked_count}"}
+                   
         
     async def allocate_gpu(self, gpu_uuid:str, container_id:str, user_id:str):
         with self.gpu_lock:

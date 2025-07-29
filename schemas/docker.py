@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 from typing import List, Optional
 
 class ContainerInfo(BaseModel):
@@ -27,3 +27,20 @@ class ContainerRequest(BaseModel):
         if duration > 168:
             raise ValueError("You cannot use the GPUs for more than a week")
         return duration
+
+class PaymentRequest(BaseModel):
+    amount: float  # In rupees
+    currency: str 
+    user_id:str
+    container_request:str
+
+class SupportRequest(BaseModel):
+    user_id: str = Field(..., alias="userId")  # Handle both userId and user_id
+    support_code: str = Field(..., alias="supportCode")
+    issue: str = Field(..., alias="description")  # Your frontend sends 'description'
+    issue_type: str = Field(..., alias="issueType")
+    user_email: str = Field(None, alias="userEmail")
+    user_agent: str = Field(None, alias="userAgent")
+    timestamp: str = Field(None)
+    source: str = Field(None)
+

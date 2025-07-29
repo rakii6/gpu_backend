@@ -11,7 +11,7 @@ CORS_CONFIG = {
 
 DOCKER_CONFIG = {
     "jupyter_notebook": {
-        "image": "jupyter/datascience-notebook",
+        "image": "jupyter/datascience-notebook:latest",
         "ports": {'8888/tcp': 8888},
         "environment": [
             "JUPYTER_ENABLE_LAB=yes",

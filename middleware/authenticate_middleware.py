@@ -5,7 +5,7 @@ from firebase_admin import auth
 
 async def verify_token(request: Request, call_next):#remember the request:Request handles all the
 
-    public_paths = ['/auth/login','/auth/signup', '/auth/reset-password', '/docs', '/openapi.json']#these 3 lines are to check public paths
+    public_paths = ['/auth/login','/auth/signup', '/auth/reset-password', '/docs', '/openapi.json', 'docker/test-persistence/test123']#these 3 lines are to check public paths
     if any (request.url.path.startswith(path) for path in public_paths): 
         return await call_next(request) 
     
@@ -29,8 +29,9 @@ async def verify_token(request: Request, call_next):#remember the request:Reques
         print(f"Token is verified")
         
 
-        request.state.user_id = decoded_token['uid'] #this is a curcial part, this middleware sets the global userid, for that current user
-        print(request.state)
+        request.state.user_id = decoded_token['uid'] #this is a curcial part, this middleware sets the global userid, for that current user, 
+        #This  user id ready to be used or summon anywhere in the platform simpley -> request.state.user_id
+        print(request.state) 
         # request.state.email = decoded_token.get('email')
         # request.state.aut_time = decoded_token.get('auth_time')
 
