@@ -1,6 +1,15 @@
-# IndieGPU Backend (FastAPI + WebSockets + Docker)
-This is the exact code running https://indiegpu.com right now.
-Repo is private, but recruiters can request access during interview.
-→ Live VRAM monitoring every 2 seconds
-→ File upload with path-traversal protection
-→ Docker + NVIDIA GPU passthrough
+# IndieGPU Backend – FastAPI + Docker + RTX 4070
+
+This is the exact code running https://indiegpu.com 24/7  
+(repo kept private to protect the business)
+
+What’s inside:
+- Real-time WebSocket sending VRAM/temp every 2 seconds  
+- Secure file upload (size limit + path traversal blocked)  
+- Docker + NVIDIA GPU passthrough (works on consumer cards)  
+- Stripe webhook handling (test mode)
+
+Happy to share screen / give temp access during interview.
+
+Live site: https://indiegpu.com
+Waitlist: 47 users and growing
