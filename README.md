@@ -1,7 +1,7 @@
 # IndieGPU Backend – FastAPI + Docker + RTX 4070
 
 This is the exact code running https://indiegpu.com 24/7  
-(repo kept private to protect the business)
+(this repo is maintained and owned by Raktim Pradip Barua)
 
 What’s inside:
 - Real-time WebSocket sending VRAM/temp every 2 seconds  
