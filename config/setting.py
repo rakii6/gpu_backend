@@ -1,9 +1,9 @@
 # app/config/settings.py
 
 CORS_CONFIG = {
-    # "allow_origins": ["*.indiegpu.com", "https://indiegpu.com", "https://www.indiegpu.com"],
+    # "allow_origins": ["*.indiegpu.com", "https://indiegpu.com", ""],
     "allow_origins": [ "https://api.indiegpu.com", "https://*.indiegpu.com",
-                      "http://localhost:5173"],
+                      "http://localhost:5173", "https://indie-gpg.vercel.app", "https://www.indiegpu.com"],
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],

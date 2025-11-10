@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from middleware.authenticate_middleware import verify_token
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from api.routes import authentication_router, dashboard_router, docker,general
+from api.routes import authentication_router, dashboard_router, docker,general,credits_router
 from config.setting import CORS_CONFIG
 from services.gpu_manager import GPUManager
 from services.redis import RedisManager
@@ -16,6 +16,7 @@ from security.authorization_service import AuthorizationService
 from services.system_metrics import System_Metrics
 from services.user_profile import UserProfileService
 from services.payment_manager import PaymentManager
+from services.credits_service import CreditsManager
 
 system_metrics = System_Metrics()
 
@@ -26,6 +27,7 @@ gpu_manager = None
 session_manager = None
 user_profile = None
 payment_manager = None
+credits_manager = None
 
 
 @asynccontextmanager
@@ -49,7 +51,8 @@ async def lifespan(app:FastAPI):
     docker_service= DockerService(gpu_manager,firebase_service, redis_manager, None) #docker manager consumes gpu manger for his own purpose
     authorization_service = AuthorizationService(firebase_service)
     # print("Docker Service initialized")
-    payment_manager = PaymentManager(gpu_manager, firebase_service)
+    credits_manager= CreditsManager(firebase_service.db)
+    payment_manager = PaymentManager(gpu_manager, firebase_service, credits_manager)
 
 
     user_profile = UserProfileService(firebase_service.db)
@@ -78,6 +81,7 @@ async def lifespan(app:FastAPI):
     app.state.payment_manager = payment_manager
     app.state.system_metrics = system_metrics
     app.state.user_profile = user_profile
+    app.state.credits_manager = credits_manager
 
 
 
@@ -126,6 +130,7 @@ app.include_router(general.router)
 app.include_router(docker.router)
 app.include_router(authentication_router.router)
 app.include_router(dashboard_router.router)
+app.include_router(credits_router.router)
 
 
 

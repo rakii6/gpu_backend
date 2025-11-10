@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Response, Request, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Response, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse
 import json
 from security.authorization_service import AuthorizationService
@@ -49,7 +49,6 @@ async def test_persistence(user_id: str, request: Request):
 
 
 
-
 @router.post('/payments/create_order')
 async def create_order(request: Request, order_creation: dict):
     try:
@@ -81,30 +80,12 @@ async def create_order(request: Request, order_creation: dict):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-    
-
-
-@router.post('/payments/clear/{order_id}')
-async def clear_order_id(request:Request, order_id:str):
-    try:
-        user_id = request.state.user_id
-        payment_manager = request.app.state.payment_manager
-        result = await payment_manager.clear_order(order_id,user_id)
-        print(f"Here are the results for the payment clear 😉😉{result}")
-        return result
-    except Exception as e: 
-        print(f"Error in the clear trash endpoint {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 
 
 
     
 @router.post('/environment/create')
-async def creation_of_environment(request:Request, creation_data: dict, background_tasks: BackgroundTasks ): #remember the subdomain we are creating it ourselves, 
+async def creation_of_environment(request:Request, creation_data: dict): #remember the subdomain we are creating it ourselves, 
      try:
 
         user_id = request.state.user_id #get the user_id from the middleware
@@ -137,8 +118,8 @@ async def creation_of_environment(request:Request, creation_data: dict, backgrou
         #     }
 
 
-
-        payment_details = await payment_manager.fetch_payment_details(payment_data["razorpay_payment_id"])
+        # payment_details = await payment_manager.fetch_payment_details(payment_data["razorpay_payment_id"])
+        payment_details = {"id": payment_data["razorpay_payment_id"], "method": "card"}
         print(f"payment details are :{payment_details}")
 
         if not payment_confirmation:
@@ -152,7 +133,7 @@ async def creation_of_environment(request:Request, creation_data: dict, backgrou
         print("🚀 About to call docker_service.create_user_environment...")
         
         # session_manager = request.app.state.session
-        result =await docker_service.create_user_environment(container_request, background_tasks)
+        result =await docker_service.create_user_environment(container_request)
 
         if result["status"] == "success":
             await payment_manager.process_successful_payment(payment_data, result["container_id"],user_id, payment_details )
@@ -167,6 +148,24 @@ async def creation_of_environment(request:Request, creation_data: dict, backgrou
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+     
+
+     
+@router.post('/payments/clear/{order_id}')
+async def clear_order_id(request:Request, order_id:str):
+    try:
+        user_id = request.state.user_id
+        payment_manager = request.app.state.payment_manager
+        result = await payment_manager.clear_order(order_id,user_id)
+        print(f"Here are the results for the payment clear 😉😉{result}")
+        return result
+    except Exception as e: 
+        print(f"Error in the clear trash endpoint {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 
 @router.get('/sessions/{container_id}/status')
 async def get_container_session_status(container_id:str, request:Request):

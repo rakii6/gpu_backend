@@ -3,9 +3,10 @@ from fastapi import Request, HTTPException
 import os
 from firebase_admin import firestore
 from dotenv import load_dotenv
-from schemas.docker import PaymentRequest, ContainerRequest
+from schemas.docker import PaymentRequest, ContainerRequest, OrderRequest
 from services.gpu_manager import GPUManager
 from services.firebase_service import FirebaseService
+from services.credits_service import CreditsManager
 import time
 import hmac
 import hashlib
@@ -18,9 +19,10 @@ load_dotenv()
 class PaymentManager:
     
 
-    def __init__(self, gpu_manager:GPUManager, firebase_service:FirebaseService):
+    def __init__(self, gpu_manager:GPUManager, firebase_service:FirebaseService, credit_manager:CreditsManager ):
         self.gpu_manager = gpu_manager
         self.firebase_service = firebase_service
+        self.credits_manager = credit_manager
         self.db = firebase_service.db
         self.key_id = os.getenv("RAZORPAY_KEY_ID")
         self.key_secret = os.getenv("RAZORPAY_KEY_SECRET")
@@ -35,7 +37,33 @@ class PaymentManager:
         gpu_lock = False
         
         try:
+            # if request.type == 'card':
+            #     try:
+            #         balance_result =await self.credits_manager.check_sufficient_credits(user_id=request.user_id, required_amount=request.amount)
 
+            #         if balance_result["status"]=="insufficent funds":
+            #             print(f"insufficent credits")
+            #             return{
+            #                 "status":"error",
+            #                 "message":"Please add credits"
+            #             }
+            #         elif balance_result["status"]=="ok":
+            #             deduct_result = await self.credits_manager.deduct_credits(user_id=request.user_id ,amount=request.amount, container_id=container_request.container_type, service_details=container_request)
+            #             print(f"Deduction happened")
+            #             return{
+            #                 "status":"success",
+            #                 "message":"Creating container"
+            #             }
+            #     except Exception as e:
+            #         import traceback
+            #         print(traceback.format_exc())
+            #         return{
+            #             "status":"error",
+            #             "message":str(e)
+            #         }
+                        
+
+                    
 
             print(f"Using Razorpay credentials - Key ID: {self.key_id}")
         
@@ -111,7 +139,95 @@ class PaymentManager:
                 "status":"error",
                 "message":f"failed payment rzaor pay {str(e)}"
             }
-    
+        
+    async def create_ordinary_order(self,request:OrderRequest):
+
+        
+        
+        try:
+            # if request.type == 'card':
+            #     try:
+            #         balance_result =await self.credits_manager.check_sufficient_credits(user_id=request.user_id, required_amount=request.amount)
+
+            #         if balance_result["status"]=="insufficent funds":
+            #             print(f"insufficent credits")
+            #             return{
+            #                 "status":"error",
+            #                 "message":"Please add credits"
+            #             }
+            #         elif balance_result["status"]=="ok":
+            #             deduct_result = await self.credits_manager.deduct_credits(user_id=request.user_id ,amount=request.amount, container_id=container_request.container_type, service_details=container_request)
+            #             print(f"Deduction happened")
+            #             return{
+            #                 "status":"success",
+            #                 "message":"Creating container"
+            #             }
+            #     except Exception as e:
+            #         import traceback
+            #         print(traceback.format_exc())
+            #         return{
+            #             "status":"error",
+            #             "message":str(e)
+            #         }
+                        
+
+                    
+            print(f"this is the request hitting the fucntion defition of create ordinatry payment{request}")
+            print(f"Using Razorpay credentials - Key ID: {self.key_id}")
+        
+        # Test the credentials first
+            try:
+                test_orders = self.razorpay_client.order.all()
+                print("Razorpay auth test successful")
+            except Exception as auth_error:
+                print(f"Razorpay auth test failed: {auth_error}")
+
+
+           
+       
+           
+            amount_without_decimals = int(float(request.amount * 100))
+
+            order_data = {
+            'amount': amount_without_decimals,
+            'currency': request.currency,
+            'receipt': f"ORD_{int(time.time())}",  # Your internal receipt ID
+            'notes':{
+                'user_id': request.user_id,
+                'order_type': request.order_type,
+            }
+           
+        }
+            razorpay_order = self.razorpay_client.order.create(data=order_data)
+            print(f"Sending order response with amount: {int(request.amount * 100)}")
+
+            await self.store_payment(user_id = request.user_id,razorpay_order = razorpay_order, order_type = request.order_type, amount= request.amount)
+            # this is to stroe pending payment, for normal orders
+
+            return {
+            'id': razorpay_order['id'],
+            'amount': int(request.amount * 100),
+            'currency': request.currency,
+            'key_id': self.key_id,  # Frontend needs this
+            'name': 'IndieGPU',
+            'description': f'creating order for {request.order_type}, for {request.user_id} user',
+            'user_id':request.user_id,
+            
+            'theme': {
+                'color': '#00E5FF'  #  neon cyan
+            },
+            'modal': {
+                'ondismiss': 'function(){console.log("Payment cancelled")}'
+            }
+        }
+        except Exception as e:
+            print(f"❌ Failed to create Razorpay order: {str(e)}")
+            return{
+                "status":"error",
+                "message":f"failed payment rzaor pay {str(e)}"
+            }
+        
+
     async def clear_order(self,razorpay_order_id, user_id):
         
         try:
@@ -137,29 +253,52 @@ class PaymentManager:
         except Exception as cleanup_error:
                 print(f"❌ Failed to delete pending payment: {cleanup_error}")    
                 return None
-            
-                
-
         
-    # def verify_razorpay_signature(self, payment_data: dict) -> bool:
-    #     """This is a method, not Razorpay's, I copied the logic"""
-    
-    
-    # # Construct the signature string
-    #     print(f"this is the verfication proccess of razpor signature")
-    #     signature_string = f"{payment_data['razorpay_order_id']}|{payment_data['razorpay_payment_id']}"
-    #     print(f"signature reciieved, {signature_string}")
-    
-    
-    # # Generate expected signature using YOUR secret key
-    #     expected_signature = hmac.new(
-    #     self.key_secret.encode(),
-    #     signature_string.encode(),
-    #     hashlib.sha256
-    #         ).hexdigest()
-    #     print(f"this is the expected signature {expected_signature}")
-    # # Compare signatures securely
-    #     return hmac.compare_digest(expected_signature, payment_data['razorpay_signature'])
+    async def clear_ordinary_order(self,razorpay_order_id, user_id):
+        
+        try:
+                if razorpay_order_id:
+                    payment_ref = self.db.collection('users').document(user_id).collection('payment_info').document(razorpay_order_id)
+                    payment_snapshot = payment_ref.get()
+                    if payment_snapshot.exists:
+                        payment_ref.delete()
+                        print(f"{payment_ref} which was pending and failed, deleted 👌👌")
+                    else:
+                        print(f"⚠️ Pending payment document not found: {razorpay_order_id}")
+                    
+                return {"Pending payment deleted"}
+                            
+        except Exception as cleanup_error:
+                print(f"❌ Failed to delete pending payment: {cleanup_error}")    
+                return None
+            
+        
+    async def store_payment(self, user_id:str,razorpay_order:dict,order_type:str,amount:float):
+        try:
+                payment_data = {
+                'razorpay_order_id':razorpay_order['id'],
+                'amount':amount,
+                'currency':razorpay_order['currency'],
+                'status':'pending',
+                'created_at':firestore.SERVER_TIMESTAMP,
+                'order_details': order_type,
+                'payment_method': None,  
+                'razorpay_payment_id': None,  
+            }
+                payement_ref = self.db.collection('users').document(user_id).collection('payment_info').document(f"credit_order_{razorpay_order['id']}")
+                payement_ref.set(payment_data)
+                stored_doc = payement_ref.get()
+                if stored_doc.exists:
+                        print("stored doc exisist 👌")
+                else:
+                        print("stored doc does not exisist 😒")
+        except Exception as e:
+                print(f"❌ Failed to store pending payment: {str(e)}")
+        
+        
+             
+          
+                  
     async def store_pending_payment(self,user_id:str,razorpay_order:dict, container_request: ContainerRequest, amount:float ):
         try:
             payment_data = {

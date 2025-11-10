@@ -1,6 +1,5 @@
 # Start from NVIDIA's CUDA base (we know this works!)
 FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
-
 # Install Python and system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -56,14 +55,8 @@ RUN pip3 install --no-cache-dir \
 
 # Set CUDA environment variables
 ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=${CUDA_HOME}/bin:/usr/local/bin:${PATH}
+ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
-
-# Create the start-notebook.sh script that NVIDIA entrypoint expects
-RUN echo '#!/bin/bash\n\
-set -e\n\
-jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root' > /usr/local/bin/start-notebook.sh && \
-    chmod +x /usr/local/bin/start-notebook.sh
 
 # Switch to jovyan user
 USER jovyan
@@ -74,5 +67,5 @@ WORKDIR /home/jovyan/work
 # Expose Jupyter port
 EXPOSE 8888
 
-# The NVIDIA entrypoint will call start-notebook.sh
-CMD ["start-notebook.sh"]
+# Default command
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]

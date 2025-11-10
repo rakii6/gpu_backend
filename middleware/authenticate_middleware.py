@@ -39,7 +39,9 @@ async def verify_token(request: Request, call_next):#remember the request:Reques
         return await call_next(request)
     
     except Exception as e:
-       
+        import traceback
+        traceback_str=traceback.format_exc()
+        print(traceback_str)
         return JSONResponse(
             status_code=401,
             content={

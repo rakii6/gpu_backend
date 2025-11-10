@@ -18,7 +18,8 @@ class DockerService:
     # Configuration at class level
     IMAGE_CONFIG = {
         "jupyter": {
-            "image": "indiegpu/jupyter:v2",
+            "image": "indiegpu/jupyter:v7",
+            "command":None,
             "base_port": 8888,
             "env": [
                 "JUPYTER_ENABLE_LAB=yes",
@@ -30,7 +31,8 @@ class DockerService:
            
         },
         "pytorch": {
-            "image": "indiegpu/jupyter:v2",
+            "image": "indiegpu/jupyter:v7",
+            "command":None,
             "base_port": 8888,
             "env": ["JUPYTER_TOKEN=mysecret123"],
             "command": "/bin/bash -c 'pip install jupyter jupyterlab && python3 -m jupyter notebook --ip=0.0.0.0 --allow-root --NotebookApp.token=mysecret123 --NotebookApp.allow_origin=* --port=8888'"
@@ -38,7 +40,8 @@ class DockerService:
            
         },
         "tensorflow": {
-            "image": "indiegpu/jupyter:v2",
+            "image": "indiegpu/jupyter:v7",
+            "command":None,
             "base_port": 8888,
             "env": ["JUPYTER_TOKEN=mysecret123",
                     "JUPYTER_ENABLE_LAB=yes"],
@@ -145,7 +148,7 @@ class DockerService:
             }
         
 
-    async def create_user_environment(self,request: ContainerRequest,  background_tasks: BackgroundTasks):
+    async def create_user_environment(self,request: ContainerRequest):
         container = None
         try:
             print(f"Starting container creation for user: {request.user_id}, type: {request.container_type}")
@@ -366,22 +369,71 @@ class DockerService:
 
 
 
-    async def _cleanup_failed_allocation(self, container_id: str, gpu_ids: List[str]):
+    async def _cleanup_failed_allocation(self, container_id: str, gpu_ids: List[str], user_id:str=None, cost:float=None, payment_method:str=None):
         """Cleanup resources if container creation fails"""
         try:
             # Remove container if it exists
             try:
                 container = self.client.containers.get(container_id)
                 container.remove(force=True)
-            except:
+                print(f"✅ Removed failed container {container_id}")
+            except docker.errors.NotFound:
+                print(f"⚠️  Container {container_id} doesn't exist in Docker (expected)")
                 pass
+            except Exception as container_error:
+                print(f"❌ Error removing container: {str(container_error)}")
 
             # Release GPU allocations
             for gpu_id in gpu_ids:
-                await self.gpu_manager.release_gpu(gpu_id)
+                 try:
+                    await self.gpu_manager.release_gpu(gpu_id)
+                    print(f"Released GPU {gpu_id} from cleanup section")
+                 except Exception as e:
+                     print(f'Error releasing GPU {gpu_id}: {str(e)}')
+                 
+            if user_id and cost and payment_method:
+                print(f"processing refund of ${cost} for {user_id}, into the {payment_method} ")
+
+                if payment_method == 'credits':
+                    try:
+                        from services.credits_service import CreditsManager
+                        credit_manager = CreditsManager(self.firebase.db)
+
+                        refund_result = await credit_manager.add_credits(user_id=user_id, amount=cost, source='refund',metadata={'container_id':container_id,'reason':'Container Allocation failure',"failure_type":'Allocation_error'})
+
+                        if refund_result['status']=='success':
+                            print(f"✅ Refunded ${cost} credits to user {user_id}")
+                        else:
+                            print(f"❌ Credit refund failed: {refund_result.get('message')}")  
+                    except Exception as refund_error:
+                        print(f"Error processing credit refund: {str(refund_error)}")
+                elif payment_method == 'card':
+                    # Log for manual Razorpay refund
+                    print(f"MANUAL REFUND REQUIRED: User {user_id} paid ${cost} via Razorpay")
+                    print(f"   Container ID: {container_id}")
+                    print(f"   Action: Admin must process Razorpay refund manually")
+                    
+                    # TODO: You could trigger a Telegram/email notification here
+                    # await self.notify_admin_manual_refund(user_id, cost, container_id)
+        
+            print(f"Failed allocation cleanup complete")
+            
+            return {
+                "status": "success",
+                "message": "Cleanup completed, refund processed if applicable"
+            }
 
         except Exception as e:
-            print(f"Cleanup error: {str(e)}")
+            print(f"💥 Error in _cleanup_failed_allocation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                "status": "error",
+                "message": f"Cleanup failed: {str(e)}"
+            }
+    
+        
 
 
     async def cleanup_container(self,container_id: str, user_id:str)->Dict:

@@ -40,7 +40,7 @@ class TokenResponse(BaseModel):
 
 
 @router.post('/signup', response_model=TokenResponse)
-async def signup(request: SignUpRequest):
+async def signup(request_obj:Request ,request: SignUpRequest):
     
     """this is for Registration of new account"""
     try:
@@ -57,11 +57,13 @@ async def signup(request: SignUpRequest):
                 display_name = request.name
             )
 
+
         user_data = {
             "name":request.name,
             "email":request.email,
             "created_at":firestore.SERVER_TIMESTAMP
         }
+        
         print("creating user in the user collection")
         db = firestore.client()
         user_ref = db.collection('users').document(user.uid)
@@ -80,8 +82,16 @@ async def signup(request: SignUpRequest):
     "total_count": 0, 
     "initialized_at": firestore.SERVER_TIMESTAMP
         })
+        user_credits = request_obj.app.state.credits_manager
+        user_cred = await user_credits.initialize_user_credits(user.uid, 5.00)
         print("done with creation of the continaer history")
-
+        # user_credits = user_ref.collection('credits').document('balance').set({
+        #     "balance":0.0,
+        #     "currency":'USD',
+        #     "created_at":firestore.SERVER_TIMESTAMP,
+        #     "last_updated_at":firestore.SERVER_TIMESTAMP,
+        #     "total_spent":0.0
+        # })
         
 
         token = auth.create_custom_token(user.uid)
@@ -92,6 +102,10 @@ async def signup(request: SignUpRequest):
             "email":request.email
         }
     except Exception as e:
+        import traceback
+        traceback_str = traceback.format_exc()
+        print(traceback_str)
+
         raise  HTTPException(
             status_code=400,
             detail=str(e)

@@ -1,5 +1,5 @@
-from pydantic import BaseModel, field_validator, Field
-from typing import List, Optional
+from pydantic import BaseModel,Field, field_validator
+from typing import List, Optional, Literal
 
 class ContainerInfo(BaseModel):
     id:str
@@ -24,8 +24,8 @@ class ContainerRequest(BaseModel):
     def duration_checker(cls, duration):
         if duration < 1:
             raise ValueError("duration must be more than 1 hour")
-        if duration > 168:
-            raise ValueError("You cannot use the GPUs for more than a week")
+        if duration > 722:
+            raise ValueError("You cannot use the GPUs for more than a month")
         return duration
 
 class PaymentRequest(BaseModel):
@@ -33,6 +33,14 @@ class PaymentRequest(BaseModel):
     currency: str 
     user_id:str
     container_request:str
+    type: Optional[Literal["card","credit"]]=None
+
+class OrderRequest(BaseModel):
+    amount:float
+    currency:str
+    user_id:str
+    order_type:str
+
 
 class SupportRequest(BaseModel):
     user_id: str = Field(..., alias="userId")  # Handle both userId and user_id
@@ -44,3 +52,11 @@ class SupportRequest(BaseModel):
     timestamp: str = Field(None)
     source: str = Field(None)
 
+class CreateContainer_Credit(BaseModel):
+    user_id:str 
+    container_type: str
+    subdomain : str
+    gpu_count:int = Field(gt=0, le=8)
+    amount:float = Field(gt=0)
+    duration: int = Field(gt=0, le=720)
+    payment_type:str 

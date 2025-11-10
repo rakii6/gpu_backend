@@ -14,24 +14,30 @@ class CreateProfileRequest(BaseModel):
 async def init_user_profile(request_data:CreateProfileRequest, request:Request):
     
     user_profile_service = request.app.state.user_profile
-
+    user_credit_info = request.app.state.credits_manager
+    credit_balance = await user_credit_info.credit_balance_get(user_id=request_data.user_id)
     result = await user_profile_service.initialize_user(
         user_id=request_data.user_id,
         email=request_data.email,
       
 
     )
-    if result["status"]=="error":
+    if result["status"]=="error" and credit_balance["status"]== "not_found":
         raise HTTPException(status_code=500, detail="Failed to init user profile")
-    return result
+    return result, credit_balance
+
 @router.get('/{user_id}')
 async def get_user_profile(user_id:str, request:Request):    
     user_profile_service = request.app.state.user_profile
+    user_credit_info = request.app.state.credits_manager
+    credit_balance = await user_credit_info.credit_balance_get(user_id)
     result = await user_profile_service.get_user_profile(user_id)
-    if result["status"] == "error":
+    # print(f"this i s t h e{credit_balance},{result}")
+    if result["status"] == "error" :
         raise HTTPException(status_code=404, detail=result["message"])
         
-    return result
+    return {"result":result,
+            "credit_balance":credit_balance}
 
 # @router.put('/{user_id}/update')
 # async def update_user_profile(request:Request, user_id:str, update_data:dict):
